@@ -1,0 +1,3 @@
+*.zip
+settings.dat
+/__pycache__/
