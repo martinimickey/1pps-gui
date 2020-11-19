@@ -73,11 +73,13 @@ class PPS_App:
                                                                 storage_folder=StringVar(self.root, ""),
                                                                 store_debug_info=BooleanVar(self.root, False),
                                                                 storage_time={key: StringVar(self.root, "00", key) for key in ("hour", "minute", "second")},
+                                                                max_live_tags=IntVar(self.root, 300),
                                                                 clock_divider=IntVar(self.root, 1))
         self._load_settings()
         for var in self.settings["storage_time"].values():
             var.trace("w", self._adjust_storage_time)
         self.settings["storage_folder"].trace("w", self._adjust_storage_folder)
+        self.settings["max_live_tags"].trace("w", self._adjust_max_live_tags)
         panes = tk.PanedWindow(orient=tk.HORIZONTAL)
         panes.pack(fill=tk.BOTH, expand=1)
         self.messages = tk.Listbox(panes)
@@ -125,6 +127,10 @@ class PPS_App:
         if self.measurement:
             self.measurement.setFolder(self.settings["storage_folder"].get())
 
+    def _adjust_max_live_tags(self, *args):
+        if self.measurement:
+            self.measurement.setTimetagsMaximum(self.settings["max_live_tags"].get())
+
     def _start_measurement(self):
         if not exists(self.settings["storage_folder"].get()):
             self.add_message("Data folder does not exist")
@@ -168,6 +174,7 @@ class PPS_App:
                                        debug_to_file=self.settings["store_debug_info"].get(),
                                        reference_name=reference_name,
                                        folder=self.settings["storage_folder"].get())
+        self.measurement.setTimetagsMaximum(self.settings["max_live_tags"].get())
         self._adjust_storage_time()
         self.fig.clear()
         self.fig.subplots(len(channels), 1, sharex="all")
@@ -278,6 +285,14 @@ class StorageConfigWindow(ModalWindow):
         self._time_digit(settings["storage_time"], "minute")
         tk.Label(self.time_display, text=":").pack(side=tk.LEFT)
         self._time_digit(settings["storage_time"], "second")
+
+        # Maximum number of live tags
+        tk.Label(self, text="Max. tags in live view").grid(row=2, column=0, sticky=tk.E)
+        tk.Spinbox(self,
+                   textvariable=settings["max_live_tags"],
+                   width=10,
+                   from_=0,
+                   to=9999999999).grid(row=2, column=1, sticky=tk.W)
 
     def _time_digit(self, settings: dict, key: str):
         max_value = dict(hour=23, minute=59, second=59)

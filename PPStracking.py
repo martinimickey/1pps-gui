@@ -23,7 +23,7 @@ class TimeTagGroup:
         self.channel_tags[channel] = timetag
 
     def get_reference_with_offset(self):
-        return self.reference_tag - self.clock_offset 
+        return self.reference_tag - self.clock_offset
 
     def get_missing_channels(self, channels: List[int]):
         missing = list(channels)
@@ -90,8 +90,7 @@ class PpsTracking(TimeTagger.CustomMeasurement):
         # self._clock_offset = 0
 
         self.channels = channels
-        if clock:
-            self.clock = Clock(clock, clock_period)
+        self.clock = Clock(clock, clock_period) if clock else None
         self.period = period
         # self.clock_period = clock_period
         self.channel_names = []
@@ -103,6 +102,7 @@ class PpsTracking(TimeTagger.CustomMeasurement):
             self.folder = getcwd()
         else:
             self.folder = folder
+        print(self.folder)
         self.new_file_time = time(hour=0, minute=0, second=0)
         try:
             if tagger.getModel() == "Time Tagger 20" and debug_to_file:
@@ -195,7 +195,7 @@ class PpsTracking(TimeTagger.CustomMeasurement):
         pass
 
     def setTimetagsMaximum(self, value: int):
-        self._max_timetags = value
+        self._max_timetags = value if value > 0 else 0
 
     def setFolder(self, folder):
         self.folder = folder
@@ -226,7 +226,7 @@ class PpsTracking(TimeTagger.CustomMeasurement):
             if len(self._timetags) > self._max_timetags:
                 self._timetags = self._timetags[-self._max_timetags:]
         self._reference_tag = TimeTagGroup(
-            self._timetag_index, timetag, self.clock.get_offset(), current_time, self.get_sensor_data(1) if self.debug_to_file else [])
+            self._timetag_index, timetag, self.clock.get_offset() if self.clock else 0, current_time, self.get_sensor_data(1) if self.debug_to_file else [])
         self._timetag_index += 1
 
     def get_sensor_data(self, col: int) -> list:
