@@ -1,11 +1,10 @@
 import tkinter as tk
-from tkinter import BooleanVar, IntVar, StringVar, ttk, messagebox
+from tkinter import BooleanVar, IntVar, StringVar, Variable, ttk, messagebox
 from threading import Thread
 from datetime import time
 from os.path import dirname, realpath, exists
 import pickle
 from time import sleep
-from tkinter.constants import LEFT
 from typing import Optional, Dict, Union, List, Callable
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 from matplotlib.figure import Figure
@@ -13,6 +12,7 @@ import TimeTagger
 from enum import Enum
 from PPStracking import PpsTracking
 
+SettingsType = Dict[Union[int, str], Union[Variable, "SettingsType"]]
 
 DIVIDER = 10 # just used for testing with Pulse Streamer, should otherwise always be 1
 
@@ -67,14 +67,14 @@ class PPS_App:
         self.measurement: Optional[PpsTracking] = None
         self.tagger: Optional[TimeTagger.TimeTagger] = None
         taggers = TimeTagger.scanTimeTagger()
-        self.settings: Dict[str, Union[StringVar, dict]] = dict(serial=tk.StringVar(self.root, taggers[0] if taggers else ""),
-                                                                channels={ch: tk.StringVar(self.root, ChannelRoles.UNUSED.value) for ch in range(1,9)},
-                                                                channel_names={ch: tk.StringVar(self.root, "") for ch in range(1,9)},
-                                                                storage_folder=StringVar(self.root, ""),
-                                                                store_debug_info=BooleanVar(self.root, False),
-                                                                storage_time={key: StringVar(self.root, "00", key) for key in ("hour", "minute", "second")},
-                                                                max_live_tags=IntVar(self.root, 300),
-                                                                clock_divider=IntVar(self.root, 1))
+        self.settings: SettingsType = dict(serial=tk.StringVar(self.root, taggers[0] if taggers else ""),
+                                            channels={ch: tk.StringVar(self.root, ChannelRoles.UNUSED.value) for ch in range(1,9)},
+                                            channel_names={ch: tk.StringVar(self.root, "") for ch in range(1,9)},
+                                            storage_folder=StringVar(self.root, ""),
+                                            store_debug_info=BooleanVar(self.root, False),
+                                            storage_time={key: StringVar(self.root, "00", key) for key in ("hour", "minute", "second")},
+                                            max_live_tags=IntVar(self.root, 300),
+                                            clock_divider=IntVar(self.root, 1))
         self._load_settings()
         for var in self.settings["storage_time"].values():
             var.trace("w", self._adjust_storage_time)
