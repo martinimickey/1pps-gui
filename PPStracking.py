@@ -11,10 +11,12 @@ from PPSutilities import Clock, TimeTagGroup, MissingTimeTagGroups
 import TimeTagger
 
 NO_SIGNAL_THRESHOLD = timedelta(seconds=5)
+COLUMN_DELIMITER = ","
 
 
 class PpsTracking(TimeTagger.CustomMeasurement):
     """Custom measurement class for tracking 1PPS signals."""
+
     def __init__(self,
                  tagger: TimeTagger.TimeTaggerBase,
                  channels: List[int],
@@ -26,7 +28,8 @@ class PpsTracking(TimeTagger.CustomMeasurement):
                  channel_names: Optional[List[str]] = None,
                  reference_name: str = "Reference",
                  debug_to_file: bool = False):
-        super().__init__(tagger)
+        TimeTagger.CustomMeasurement.__init__(self, tagger)
+        self.tagger = tagger
         self.data_file: Optional[TextIOWrapper] = None
         self._channel_tags = list()
         self._reference_tag = None
@@ -41,7 +44,7 @@ class PpsTracking(TimeTagger.CustomMeasurement):
         self._all_channels = list()
 
         self.channels = channels
-        self.clock = Clock(clock, clock_period) if clock else None
+        self.clock = Clock(clock, clock_period, self.dtype) if clock else None
         self.period = period
         self.channel_names = []
         self.reference_name = reference_name
@@ -78,10 +81,12 @@ class PpsTracking(TimeTagger.CustomMeasurement):
         self._all_channels.append(channel)
 
     def getData(self):
+        self._lock()
         data = numpy.empty(
             [len(self.channels), len(self._timetags)], dtype=float)
         for index, tag in enumerate(self._timetags):
             data[:, index] = tag.get_channel_tags(self.channels)
+        self._unlock()
         return data
 
     def getIndex(self):
@@ -93,27 +98,29 @@ class PpsTracking(TimeTagger.CustomMeasurement):
     def getChannelNames(self):
         return self.channel_names
 
-    def measure(self, incoming_tags, begin_time, end_time):
+    def process(self, incoming_tags, begin_time, end_time):
         """Method called by TimeTagger.CustomMeasurement for processing of incoming time tags."""
         current_time = self._now()
         tag_index = 0
         incoming_tags = incoming_tags[numpy.isin(incoming_tags["channel"], self._all_channels)]
-        while len(incoming_tags) > tag_index:
-            if self.clock:
-                tag_index += self.clock.process_tags(incoming_tags[tag_index:])
-                if tag_index == len(incoming_tags):
-                    break
-            channel = incoming_tags[tag_index]["channel"]
-            timetag = self.clock.rescale_tag(incoming_tags[tag_index]["time"]) if self.clock else incoming_tags[tag_index]["time"]
-            tag_index += 1
-            if channel == self.reference:
+        if self.clock:
+            incoming_tags = self.clock.process_tags(incoming_tags[tag_index:])
+        # while len(incoming_tags) > tag_index:
+            # if self.clock:
+            #     tag_index += self.clock.process_tags(incoming_tags[tag_index:])
+            # if tag_index == len(incoming_tags):
+            #     break
+        for tag in incoming_tags:
+            # channel = incoming_tags[tag_index]["channel"]
+            # timetag = self.clock.rescale_tag(tag["time"], tag["channel"]) if self.clock else tag["time"]
+            # tag_index += 1
+            if tag["channel"] == self.reference:
                 if self._reference_tag is not None:
-                    index = self._select_tags_within_range(timetag)
-                    self._channel_tags = self._channel_tags[index:]
+                    self._select_tags_within_range(tag["time"])
                 self._last_reference_time = current_time
-                self._next_tag_group(timetag, current_time)
+                self._next_tag_group(tag["time"], current_time)
             else:
-                self._channel_tags.append((channel, timetag))
+                self._channel_tags.append((tag["channel"], tag["time"]))
             self._last_signal_time = current_time
         if current_time - self._last_signal_time > NO_SIGNAL_THRESHOLD:
             self._new_message(
@@ -136,7 +143,7 @@ class PpsTracking(TimeTagger.CustomMeasurement):
                 if num_periods:
                     MissingTimeTagGroups(
                         num_periods, self._channel_tags[:index])
-        return index
+        self._channel_tags = self._channel_tags[index:]
 
     def clear_impl(self):
         pass
@@ -184,7 +191,7 @@ class PpsTracking(TimeTagger.CustomMeasurement):
         self._close_file()
         filename = self.folder + "/" + current_time.strftime("%Y-%m-%d_%H-%M-%S.csv")
         self.data_file = open(filename, "w", newline="")
-        writer = csv.writer(self.data_file, delimiter=",")
+        writer = csv.writer(self.data_file, delimiter=COLUMN_DELIMITER)
         debug_header = self.get_sensor_data(0) if self.debug_to_file else []
         writer.writerow(["Index", "UTC", self.reference_name] +
                         self.channel_names + debug_header)
@@ -208,8 +215,7 @@ class PpsTracking(TimeTagger.CustomMeasurement):
                 if tag.time.time() >= self.new_file_time or self.new_file_time >= self._last_reference_time.time():
                     self._open_file(tag.time)
         if self.data_file:
-            writer = csv.writer(self.data_file, delimiter=",")
+            writer = csv.writer(self.data_file, delimiter=COLUMN_DELIMITER)
             writer.writerow([tag.index, tag.time.replace(microsecond=0).isoformat(), tag.reference_tag] +
                             tag.get_channel_tags(self.channels) + tag.debug_data)
         self._last_time_check = tag.time
-

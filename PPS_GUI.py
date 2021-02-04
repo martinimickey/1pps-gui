@@ -14,7 +14,13 @@ from PPStracking import PpsTracking
 
 SettingsType = Dict[Union[int, str], Union[Variable, "SettingsType"]]
 
-DIVIDER = 10 # just used for testing with Pulse Streamer, should otherwise always be 1
+if exists("PULSE_STREAMER"):
+    # If a file PULSE_STREAMER is found in the current directory, DIVIDER is set to 10.
+    # Just needed for testing with Pulse Streamer, should otherwise always be 1
+    DIVIDER = 10
+else:
+    DIVIDER = 1
+
 
 def this_folder():
     return dirname(realpath(__file__))
@@ -37,7 +43,7 @@ class DisplayUpdater(Thread):
         self.channels = channels
         self.channel_names = measurement.getChannelNames()
         self.add_message = add_message
-    
+
     def run(self):
         while self.measurement.isRunning():
             timetag_number, message_number = self.measurement.getMeasurementStatus()
@@ -58,8 +64,10 @@ class DisplayUpdater(Thread):
                 self.last_message = message_number
             sleep(0.1)
 
+
 class PPS_App:
     """The graphical user interface for tracking PPS signals."""
+
     def __init__(self):
         self.root = tk.Tk()
         self.root.iconbitmap(this_folder() + "/iconTT.ico")
@@ -68,13 +76,13 @@ class PPS_App:
         self.tagger: Optional[TimeTagger.TimeTagger] = None
         taggers = TimeTagger.scanTimeTagger()
         self.settings: SettingsType = dict(serial=tk.StringVar(self.root, taggers[0] if taggers else ""),
-                                            channels={ch: tk.StringVar(self.root, ChannelRoles.UNUSED.value) for ch in range(1,9)},
-                                            channel_names={ch: tk.StringVar(self.root, "") for ch in range(1,9)},
-                                            storage_folder=StringVar(self.root, ""),
-                                            store_debug_info=BooleanVar(self.root, False),
-                                            storage_time={key: StringVar(self.root, "00", key) for key in ("hour", "minute", "second")},
-                                            max_live_tags=IntVar(self.root, 300),
-                                            clock_divider=IntVar(self.root, 1))
+                                           channels={ch: tk.StringVar(self.root, ChannelRoles.UNUSED.value) for ch in range(1, 9)},
+                                           channel_names={ch: tk.StringVar(self.root, "") for ch in range(1, 9)},
+                                           storage_folder=StringVar(self.root, ""),
+                                           store_debug_info=BooleanVar(self.root, False),
+                                           storage_time={key: StringVar(self.root, "00", key) for key in ("hour", "minute", "second")},
+                                           max_live_tags=IntVar(self.root, 300),
+                                           clock_divider=IntVar(self.root, 1))
         self._load_settings()
         for var in self.settings["storage_time"].values():
             var.trace("w", self._adjust_storage_time)
@@ -88,7 +96,7 @@ class PPS_App:
         panes.add(self.fig_frame)
         self.root.protocol("WM_DELETE_WINDOW", self._quit)
         self.root.state("zoomed")
-        
+
     def run(self):
         """Run the tkinter application."""
         self.root.wm_title("PPS tracking")
@@ -174,6 +182,9 @@ class PPS_App:
                                        debug_to_file=self.settings["store_debug_info"].get(),
                                        reference_name=reference_name,
                                        folder=self.settings["storage_folder"].get())
+        # self.filewriter = TimeTagger.FileWriter(tagger=self.tagger,
+        #                                         filename="test3.ttbin",
+        #                                         channels=list(range(1, 9)))
         self.measurement.setTimetagsMaximum(self.settings["max_live_tags"].get())
         self._adjust_storage_time()
         self.fig.clear()
@@ -202,7 +213,7 @@ class PPS_App:
         self._save_settings()
         self.root.quit()
         self.root.destroy()
-    
+
     def _save_settings(self):
         def to_string_dict(original: dict):
             new = dict()
@@ -228,7 +239,7 @@ class PPS_App:
                 from_string_dict(self.settings, pickle.load(storage))
         except:
             pass
-        
+
 
 class ModalWindow(tk.Toplevel):
     def __init__(self, parent: PPS_App, title: str):
