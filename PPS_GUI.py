@@ -49,6 +49,7 @@ class DisplayUpdater(Thread):
             timetag_number, message_number = self.measurement.getMeasurementStatus()
             if timetag_number > self.last_tag:
                 data = self.measurement.getData()
+                # print(data)
                 index = self.measurement.getIndex()
                 for ch in range(data.shape[0]):
                     axis = self.plot.get_axes()[ch]

@@ -1,13 +1,13 @@
 """Custom measurement class for tracking 1PPS signals."""
 
 from io import TextIOWrapper
-from typing import List, Optional
+from typing import List, Optional, Union
 import csv
 from os.path import isdir
 from os import getcwd
 from datetime import datetime, timedelta, timezone, time
 import numpy
-from PPSutilities import Clock, TimeTagGroup, MissingTimeTagGroups
+from PPSutilities import Clock, TimeTagGroup, MissingTimeTagGroup, TimeTagGroupBase
 import TimeTagger
 
 NO_SIGNAL_THRESHOLD = timedelta(seconds=5)
@@ -37,7 +37,7 @@ class PpsTracking(TimeTagger.CustomMeasurement):
         self._last_reference_time = None
         self._last_time_check = self._now()
         self._messages = list()
-        self._timetags = list()
+        self._timetags: List[TimeTagGroupBase] = list()
         self._max_timetags = 300
         self._timetag_index = 0
         self._message_index = 0
@@ -87,9 +87,11 @@ class PpsTracking(TimeTagger.CustomMeasurement):
         for index, tag in enumerate(self._timetags):
             data[:, index] = tag.get_channel_tags(self.channels)
         self._unlock()
+        print(data)
         return data
 
     def getIndex(self):
+        print(numpy.arange(self._timetag_index - len(self._timetags), self._timetag_index))
         return numpy.arange(self._timetag_index - len(self._timetags), self._timetag_index)
 
     def getMeasurementStatus(self):
@@ -102,32 +104,30 @@ class PpsTracking(TimeTagger.CustomMeasurement):
         """Method called by TimeTagger.CustomMeasurement for processing of incoming time tags."""
         current_time = self._now()
         tag_index = 0
-        incoming_tags = incoming_tags[numpy.isin(incoming_tags["channel"], self._all_channels)]
+        incoming_tags = incoming_tags[numpy.logical_or(numpy.isin(incoming_tags["channel"], self._all_channels), incoming_tags["type"] > 0)]
         if self.clock:
             incoming_tags = self.clock.process_tags(incoming_tags[tag_index:])
-        # while len(incoming_tags) > tag_index:
-            # if self.clock:
-            #     tag_index += self.clock.process_tags(incoming_tags[tag_index:])
-            # if tag_index == len(incoming_tags):
-            #     break
         for tag in incoming_tags:
-            # channel = incoming_tags[tag_index]["channel"]
-            # timetag = self.clock.rescale_tag(tag["time"], tag["channel"]) if self.clock else tag["time"]
-            # tag_index += 1
             if tag["channel"] == self.reference:
-                if self._reference_tag is not None:
-                    self._select_tags_within_range(tag["time"])
-                self._last_reference_time = current_time
-                self._next_tag_group(tag["time"], current_time)
-            else:
-                self._channel_tags.append((tag["channel"], tag["time"]))
+                self._process_reference_tag()
+            if tag["type"] == 0:
+                if tag["channel"] == self.reference:
+                    self._last_reference_time = current_time
+                    self._next_tag_group(tag["time"], current_time)
+                else:
+                    self._channel_tags.append((tag["channel"], tag["time"]))
+            elif tag["type"] == 4:
+                if tag["channel"] == self.reference:
+                    print("missed", tag["missed_events"])
+                    for i in range(tag["missed_events"]):
+                        self._missing_tag_group(current_time=current_time)
             self._last_signal_time = current_time
         if current_time - self._last_signal_time > NO_SIGNAL_THRESHOLD:
             self._new_message(
                 "No incoming signals for more than " + str(NO_SIGNAL_THRESHOLD.seconds) + " s.", current_time)
             self._last_signal_time = current_time
 
-    def _select_tags_within_range(self, this_timetag):
+    def _select_tags_within_range(self):
         """Add the timetags for the last reference tag. Called when a new reference tag arrives."""
         lower_limit = self._reference_tag.reference_tag - self.period//2
         upper_limit = self._reference_tag.reference_tag + self.period//2
@@ -137,12 +137,6 @@ class PpsTracking(TimeTagger.CustomMeasurement):
                 break
             if timetag >= lower_limit:
                 self._reference_tag.add_tag(channel, timetag)
-            else:
-                num_periods = (
-                    this_timetag - self._reference_tag.reference_tag - self.period//2) // self.period
-                if num_periods:
-                    MissingTimeTagGroups(
-                        num_periods, self._channel_tags[:index])
         self._channel_tags = self._channel_tags[index:]
 
     def clear_impl(self):
@@ -170,9 +164,9 @@ class PpsTracking(TimeTagger.CustomMeasurement):
         self._messages.append(message)
         self._message_index += 1
 
-    def _next_tag_group(self, timetag: int, current_time: datetime):
-        """Create a new group of tags for a given reference tag."""
+    def _process_reference_tag(self):
         if self._reference_tag is not None:
+            self._select_tags_within_range()
             if missing := self._reference_tag.get_missing_channels(self.channels):
                 self._new_message("Tags missing: " +
                                   ", ".join([f"input {ch}" for ch in missing]))
@@ -180,8 +174,18 @@ class PpsTracking(TimeTagger.CustomMeasurement):
             self._store_timetag(self._reference_tag)
             if len(self._timetags) > self._max_timetags:
                 self._timetags = self._timetags[-self._max_timetags:]
+
+    def _next_tag_group(self, timetag: int, current_time: datetime):
+        """Create a new group of tags for a given reference tag."""
+        print("next")
         self._reference_tag = TimeTagGroup(
             self._timetag_index, timetag, current_time, self.get_sensor_data(1) if self.debug_to_file else [])
+        self._timetag_index += 1
+
+    def _missing_tag_group(self, current_time: datetime):
+        print("missed")
+        self._reference_tag = None
+        self._timetags.append(MissingTimeTagGroup(current_time))
         self._timetag_index += 1
 
     def get_sensor_data(self, col: int) -> list:
