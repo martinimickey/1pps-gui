@@ -6,13 +6,13 @@ from datetime import datetime
 import numpy
 from numba.types import int32, int64, b1
 from numba.experimental import jitclass
-import TimeTagger
 
 
-@jitclass([("max_length", int64),
-           ("period", int32),
+@jitclass([("max_length", int32),
+           ("period", int64),
            ("channel", int32),
            ("tags", int64[:]),
+           ("delayed_clock_tag", int64),
            ("timestamp_storage", int64[:]),
            ("channel_storage", int32[:]),
            ("storage_start", int32),
@@ -24,8 +24,7 @@ import TimeTagger
            ("xy_sum", int64),
            ("last_tag", int64),
            ("position", int32),
-           ("full", b1),
-           ("offset", int64)])
+           ("full", b1)])
 class LinearClockApproximation:
     """Calculate an approximated value based on linear fitting."""
 
@@ -34,6 +33,7 @@ class LinearClockApproximation:
         self.period = period
         self.channel = channel
         self.tags = numpy.zeros(length, dtype=numpy.int64)
+        self.delayed_clock_tag = -1
         self.timestamp_storage = numpy.zeros(1000, dtype=numpy.int64)
         self.channel_storage = numpy.zeros(1000, dtype=numpy.int32)
         self.storage_start = 0
@@ -46,36 +46,35 @@ class LinearClockApproximation:
         self.last_tag: int
         self.position: int
         self.full: bool
-        self.offset: int
         self._reset()
 
     def _reset(self):
         """Reset calculated values to start values."""
-        self.denominator = 1
+        self.denominator = 0
         self.y_sum = 0
         self.xy_sum = 0
         self.last_tag = 0
         self.position = 0
         self.full = False
-        self.offset = 0
+        self.delayed_clock_tag = -1
 
-    def skip(self, number_of_skipped_tags: int):
+    def _skip(self, number_of_skipped_tags: int, reset: bool):
         self.clock_time += number_of_skipped_tags * self.period
-        self._reset()
+        if reset:
+            self._reset()
 
     def process_tags(self, tags: numpy.array, rescaled_tags: numpy.array) -> int:
         rescaled_tags_index = 0
         for tag in tags:
             if tag["type"] == 0:
                 if tag["channel"] == self.channel:
-                    self.new_tag(tag["time"])
-                    cycle_length = self.clock_timestamps[1] - self.clock_timestamps[0]
-                    while self.storage_start != self.storage_end and self.timestamp_storage[self.storage_start] < self.clock_timestamps[1]:
-                        if cycle_length > 0:
-                            rescaled_tags[rescaled_tags_index]["time"] = self.rescale(cycle_length)
-                            rescaled_tags[rescaled_tags_index]["channel"] = self.channel_storage[self.storage_start]
-                            rescaled_tags_index += 1
-                        self.storage_start = self._increment_storage_pointer(self.storage_start)
+                    if self.delayed_clock_tag >= 0:
+                        self._process_clock_tag()
+                        if self.storage_end != self.storage_start:
+                            rescaled_tags_index = self._rescale(rescaled_tags, rescaled_tags_index)
+                    else:
+                        self._skip(1, reset=False)
+                    self.delayed_clock_tag = tag["time"]
                 else:
                     self.timestamp_storage[self.storage_end] = tag["time"]
                     self.channel_storage[self.storage_end] = tag["channel"]
@@ -84,15 +83,11 @@ class LinearClockApproximation:
                         self.storage_end = 0
             else:
                 if tag["type"] == 4 and tag["channel"] == self.channel:
-                    self.skip(tag["missed_events"])
-                    while self.storage_start != self.storage_end:
-                        rescaled_tags[rescaled_tags_index]["type"] = 4
-                        rescaled_tags[rescaled_tags_index]["channel"] = self.channel_storage[self.storage_start]
-                        rescaled_tags_index += 1
-                        self.storage_start = self._increment_storage_pointer(self.storage_start)
+                    self.clock_timestamps[:2] = self.clock_timestamps[1:]
+                    rescaled_tags_index = self._rescale(rescaled_tags, rescaled_tags_index)
+                    self._skip(tag["missed_events"], reset=True)
                 else:
                     rescaled_tags[rescaled_tags_index] = tag
-                    rescaled_tags[rescaled_tags_index]
                     rescaled_tags_index += 1
         return rescaled_tags_index
 
@@ -102,32 +97,45 @@ class LinearClockApproximation:
             return 0
         return pointer
 
-    def new_tag(self, tag: int):
+    def _process_clock_tag(self):
         """Add new clock tag and adjust calculated values."""
+        if self.storage_start != self.storage_end:
+            if self.full or self.position > 1:
+                length = self.max_length if self.full else self.position
+                offset = (((length << 1) - 1) * self.y_sum + 3 * self.xy_sum) // self.denominator
+                self.clock_timestamps[:2] = self.clock_timestamps[1:]
+                self.clock_timestamps[2] = self.last_tag + offset
+            else:
+                self.clock_timestamps[2] = self.last_tag
+        tag = self.delayed_clock_tag
         step = tag - self.last_tag - self.period
         self.last_tag = tag
         if self.full:
             front_to_end = tag - self.tags[self.position] - self.max_length * self.period
-            self.xy_sum += -self.y_sum + step * ((self.max_length * (self.max_length + 1)) >> 1) - front_to_end * self.max_length
+            self.xy_sum += -self.y_sum + step * self.denominator - front_to_end * self.max_length
             self.y_sum += front_to_end - self.max_length * step
-            self.offset = (((self.max_length << 1) - 1) * self.y_sum + 3 * self.xy_sum) // self.denominator
         else:
-            if self.position:
-                self.xy_sum += -self.y_sum + step * (((self.position + 1) * self.position) >> 1)
-                self.y_sum -= self.position * step
-            self.denominator = ((self.position + 1) * (self.position + 2)) >> 1
-            self.offset = (((self.position << 1) + 1) * self.y_sum + 3 * self.xy_sum) // self.denominator
-            if self.position + 1 == self.max_length:
-                self.full = True
+            self.xy_sum += -self.y_sum + step * self.denominator
+            self.y_sum -= self.position * step
+            self.denominator += self.position + 1
         self.tags[self.position] = tag
         self.clock_time += self.period
-        self.position = (self.position + 1) % self.max_length
-        if self.full or self.position > 1:
-            self.clock_timestamps[:2] = self.clock_timestamps[1:]
-            self.clock_timestamps[2] = tag + self.offset
+        self.position += 1
+        if self.position == self.max_length:
+            self.position = 0
+            self.full = True
 
-    def rescale(self, length: int) -> int:
-        return self.clock_time + (self.period * (self.timestamp_storage[self.storage_start] - self.clock_timestamps[0])) // length
+    def _rescale(self, rescaled_tags: numpy.ndarray, rescaled_tags_index) -> int:
+        cycle_length = self.clock_timestamps[1] - self.clock_timestamps[0]
+        while self.storage_start != self.storage_end and self.timestamp_storage[self.storage_start] < self.clock_timestamps[1]:
+            if cycle_length > 0:
+                rescaled_tags[rescaled_tags_index]["type"] = 0
+                rescaled_tags[rescaled_tags_index]["missed_events"] = 0
+                rescaled_tags[rescaled_tags_index]["time"] = self.clock_time + (self.period * (self.timestamp_storage[self.storage_start] - self.clock_timestamps[0])) // cycle_length
+                rescaled_tags[rescaled_tags_index]["channel"] = self.channel_storage[self.storage_start]
+                rescaled_tags_index += 1
+            self.storage_start = self._increment_storage_pointer(self.storage_start)
+        return rescaled_tags_index
 
 
 class TimeTagGroupBase:
@@ -175,67 +183,12 @@ class Clock:
         self.average_length = average_length
         self.data = LinearClockApproximation(
             self.average_length, period, channel)
-        self.channel = channel
-        self.period = period
-        self.last_time_tag = 0
-        self.stored_clock_tags: List[numpy.array] = list()
-        self._last_tags_stored = False
         self.rescaled_tags = numpy.zeros(16*period//2000, dtype=dtype)
-
-    def rescale_tag(self, tag: int, channel: int) -> int:
-        """Get a the tag time based on the clock input."""
-        # print("rescale")
-        return self.data.rescale_tag(tag)
 
     def process_tags(self, tags: numpy.array) -> numpy.ndarray:
         """Process a set of incoming tags."""
         index = self.data.process_tags(tags, self.rescaled_tags)
         return self.rescaled_tags[:index]
-        # if tags[0]["channel"] != self.channel:
-        #     return 0
-        # clock_until = numpy.argmax(tags["channel"] != self.channel)
-        # if clock_until == 0:  # all tags are clock tags
-        #     self.data.print("a")
-        #     self.to_storage(tags)
-        #     return len(tags)
-        # elif clock_until > self.average_length:
-        #     self.data.print("b")
-        #     start_index = clock_until - self.average_length
-        #     self.data.skip(self.number_of_tags_in_storage() + start_index)
-        #     self.stored_clock_tags.clear()
-        #     return self.data.process_tags(tags, start_index)
-        # else:
-        #     self.data.print("c")
-        #     self.process_storage(clock_until)
-        #     return self.data.process_tags(tags)
-
-    def to_storage(self, tags: numpy.array):
-        storage = [tags]
-        length = len(tags)
-        tags_in_storage = self.number_of_tags_in_storage()
-        for stored_tags in self.stored_clock_tags:
-            if length >= self.average_length:
-                break
-            length += len(stored_tags)
-            storage.append(stored_tags)
-        self.data.skip(tags_in_storage + len(tags) - length)
-        self.stored_clock_tags = storage
-
-    def number_of_tags_in_storage(self):
-        return sum([len(tags) for tags in self.stored_clock_tags])
-
-    def process_storage(self, clock_until: int):
-        if self.stored_clock_tags:
-            tags_in_storage = self.number_of_tags_in_storage()
-            offset = tags_in_storage + clock_until - self.average_length
-            self.data.skip(offset)
-            for tags in self.stored_clock_tags[::-1]:
-                if len(tags) <= offset:
-                    offset -= len(tags)
-                    continue
-                self.data.process_tags(tags, offset)
-                offset = 0
-            self.stored_clock_tags.clear()
 
 
 if __name__ == "__main__":
@@ -262,5 +215,5 @@ if __name__ == "__main__":
 
     plt.figure()
     plt.plot(numpy.diff(clk_ticks))
-    plt.plot(numpy.diff(corrected["time"])[:-3])
+    plt.plot(numpy.diff(corrected["time"])[:-4])
     plt.show()

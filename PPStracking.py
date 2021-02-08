@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone, time
 import numpy
 from PPSutilities import Clock, TimeTagGroup, MissingTimeTagGroup, TimeTagGroupBase
 import TimeTagger
+from time import sleep
 
 NO_SIGNAL_THRESHOLD = timedelta(seconds=5)
 COLUMN_DELIMITER = ","
@@ -87,11 +88,9 @@ class PpsTracking(TimeTagger.CustomMeasurement):
         for index, tag in enumerate(self._timetags):
             data[:, index] = tag.get_channel_tags(self.channels)
         self._unlock()
-        print(data)
         return data
 
     def getIndex(self):
-        print(numpy.arange(self._timetag_index - len(self._timetags), self._timetag_index))
         return numpy.arange(self._timetag_index - len(self._timetags), self._timetag_index)
 
     def getMeasurementStatus(self):
@@ -116,11 +115,11 @@ class PpsTracking(TimeTagger.CustomMeasurement):
                     self._next_tag_group(tag["time"], current_time)
                 else:
                     self._channel_tags.append((tag["channel"], tag["time"]))
-            elif tag["type"] == 4:
-                if tag["channel"] == self.reference:
-                    print("missed", tag["missed_events"])
-                    for i in range(tag["missed_events"]):
-                        self._missing_tag_group(current_time=current_time)
+            else:
+                if tag["type"] == 4:
+                    if tag["channel"] == self.reference:
+                        for i in range(tag["missed_events"]):
+                            self._missing_tag_group(current_time=current_time)
             self._last_signal_time = current_time
         if current_time - self._last_signal_time > NO_SIGNAL_THRESHOLD:
             self._new_message(
@@ -177,13 +176,11 @@ class PpsTracking(TimeTagger.CustomMeasurement):
 
     def _next_tag_group(self, timetag: int, current_time: datetime):
         """Create a new group of tags for a given reference tag."""
-        print("next")
         self._reference_tag = TimeTagGroup(
             self._timetag_index, timetag, current_time, self.get_sensor_data(1) if self.debug_to_file else [])
         self._timetag_index += 1
 
     def _missing_tag_group(self, current_time: datetime):
-        print("missed")
         self._reference_tag = None
         self._timetags.append(MissingTimeTagGroup(current_time))
         self._timetag_index += 1
