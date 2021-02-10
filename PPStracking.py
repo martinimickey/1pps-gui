@@ -89,10 +89,10 @@ class PpsTracking(TimeTagger.CustomMeasurement):
         for index, tag in enumerate(self._timetags):
             data[:, index] = tag.get_channel_tags(self.channels)
         self._unlock()
-        print("")
-        for channel in data:
-            x = channel[~numpy.isnan(channel)]
-            print(numpy.std(x), numpy.mean(x))
+        # print("")
+        # for channel in data:
+        #     x = channel[~numpy.isnan(channel)]
+        #     print(numpy.std(x), numpy.mean(x))
         return data
 
     def getIndex(self):

@@ -25,9 +25,13 @@ from numba.experimental import jitclass
            ("clock_tag_pointer", int32),
            ("full", b1)])
 class LinearClockApproximation:
-    """Calculate an approximated value based on linear fitting."""
+    r"""Calculate an approximated value based on linear fitting.
 
-    def __init__(self, length: int, period: int, channel):
+    :param length: The number of time-tags to be used for the fit.
+    :param period: The nominal period of the clock.
+    :param channel: The channel number of the clock."""
+
+    def __init__(self, length: int, period: int, channel: int):
         self.max_length = length
         self.period = period
         self.channel = channel
@@ -47,7 +51,7 @@ class LinearClockApproximation:
         self._reset()
 
     def _reset(self):
-        """Reset calculated values to start values."""
+        r"""Reset calculated values to start values."""
         self.i_sum = 0
         self.y_sum = 0
         self.xy_sum = 0
@@ -56,6 +60,10 @@ class LinearClockApproximation:
         self.delayed_clock_tag = -1
 
     def _skip(self, number_of_skipped_tags: int, reset: bool):
+        r"""Skip a certain amount of clock cycles, e.g. in case of overflows.
+
+        :param number_of_skipped_tags: Number of tags that will be skipped.
+        :param reset: If True, fitting parameters are cleared."""
         self.clock_time += number_of_skipped_tags * self.period
         if reset:
             self._reset()
