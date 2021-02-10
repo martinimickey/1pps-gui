@@ -121,6 +121,10 @@ class LinearClockApproximation:
             self.i_sum += self.clock_tag_pointer + 1
         self.clock_tags[self.clock_tag_pointer] = tag
         self.clock_time += self.period
+        self.clock_tag_pointer += 1
+        if self.clock_tag_pointer == self.max_length:
+            self.clock_tag_pointer = 0
+            self.full = True
 
     def _rescale(self, rescaled_tags: numpy.ndarray, rescaled_tags_index) -> int:
         cycle_length = self.clock_timestamps[1] - self.clock_timestamps[0]
