@@ -7,7 +7,7 @@ from os.path import isdir
 from os import getcwd
 from datetime import datetime, timedelta, timezone, time
 import numpy
-from PPSutilities import Clock, TimeTagGroup, MissingTimeTagGroup, TimeTagGroupBase
+from PPSutilities import Clock, TimeTagGroup, MissingTimeTagGroup, TimeTagGroupBase, TimeTag
 import TimeTagger
 from time import sleep
 
@@ -32,8 +32,8 @@ class PpsTracking(TimeTagger.CustomMeasurement):
         TimeTagger.CustomMeasurement.__init__(self, tagger)
         self.tagger = tagger
         self.data_file: Optional[TextIOWrapper] = None
-        self._channel_tags = list()
-        self._reference_tag = None
+        self._channel_tags: List[TimeTag] = list()
+        self._reference_tag: Optional[TimeTagGroup] = None
         self._last_signal_time = self._now()
         self._last_reference_time = None
         self._last_time_check = self._now()
@@ -43,6 +43,7 @@ class PpsTracking(TimeTagger.CustomMeasurement):
         self._timetag_index = 0
         self._message_index = 0
         self._all_channels = list()
+        self._channel_tag_offest = dict()
 
         self.channels = channels
         self.clock = Clock(clock, clock_period, self.dtype) if clock else None
@@ -88,6 +89,10 @@ class PpsTracking(TimeTagger.CustomMeasurement):
         for index, tag in enumerate(self._timetags):
             data[:, index] = tag.get_channel_tags(self.channels)
         self._unlock()
+        print("")
+        for channel in data:
+            x = channel[~numpy.isnan(channel)]
+            print(numpy.std(x), numpy.mean(x))
         return data
 
     def getIndex(self):
@@ -114,7 +119,7 @@ class PpsTracking(TimeTagger.CustomMeasurement):
                     self._last_reference_time = current_time
                     self._next_tag_group(tag["time"], current_time)
                 else:
-                    self._channel_tags.append((tag["channel"], tag["time"]))
+                    self._channel_tags.append(TimeTag(tag))
             else:
                 if tag["type"] == 4:
                     if tag["channel"] == self.reference:
@@ -128,15 +133,36 @@ class PpsTracking(TimeTagger.CustomMeasurement):
 
     def _select_tags_within_range(self):
         """Add the timetags for the last reference tag. Called when a new reference tag arrives."""
-        lower_limit = self._reference_tag.reference_tag - self.period//2
-        upper_limit = self._reference_tag.reference_tag + self.period//2
-        index = 0
-        for index, (channel, timetag) in enumerate(self._channel_tags):
-            if timetag > upper_limit:
-                break
-            if timetag >= lower_limit:
-                self._reference_tag.add_tag(channel, timetag)
-        self._channel_tags = self._channel_tags[index:]
+        reference_time = self._reference_tag.reference_tag
+        lower_limit = reference_time - self.period
+        self._determine_channel_tag_offset()
+        remaining = list()
+        minimum_distance = dict()
+        for tag in self._channel_tags:
+            if tag.channel not in self._channel_tag_offest:
+                remaining.append(tag)
+                continue
+            if tag.time < lower_limit:
+                continue
+            distance = tag.time - reference_time - self._channel_tag_offest[tag.channel]
+            if tag.channel not in minimum_distance or abs(distance) < minimum_distance[tag.channel]:
+                minimum_distance[tag.channel] = abs(distance)
+                self._reference_tag.add_tag(tag)
+            else:
+                remaining.append(tag)
+        self._channel_tags = remaining
+
+    def _determine_channel_tag_offset(self):
+        if len(self._channel_tag_offest) < len(self.channels):
+            reference_time = self._reference_tag.reference_tag
+            for channel in self.channels:
+                if channel not in self._channel_tag_offest:
+                    distance = [tag.time - reference_time for tag in self._channel_tags if tag.channel == channel]
+                    if len(distance) > 1:
+                        abs_distance = [abs(d) for d in distance]
+                        if min(abs_distance) < self.period:
+                            self._channel_tag_offest[channel] = distance[abs_distance.index(min(abs_distance))]
+            print(self._channel_tag_offest)
 
     def clear_impl(self):
         pass

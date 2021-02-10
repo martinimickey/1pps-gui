@@ -1,7 +1,7 @@
 """Utilities for 1PPS measurements."""
 
 from __future__ import annotations
-from typing import List, Tuple
+from typing import List
 from datetime import datetime
 import numpy
 from numba.types import int32, int64, b1
@@ -11,7 +11,7 @@ from numba.experimental import jitclass
 @jitclass([("max_length", int32),
            ("period", int64),
            ("channel", int32),
-           ("tags", int64[:]),
+           ("clock_tags", int64[:]),
            ("delayed_clock_tag", int64),
            ("timestamp_storage", int64[:]),
            ("channel_storage", int32[:]),
@@ -19,11 +19,11 @@ from numba.experimental import jitclass
            ("storage_end", int32),
            ("clock_time", int64),
            ("clock_timestamps", int64[:]),
-           ("denominator", int64),
            ("y_sum", int64),
            ("xy_sum", int64),
+           ("i_sum", int64),
            ("last_tag", int64),
-           ("position", int32),
+           ("clock_tag_pointer", int32),
            ("full", b1)])
 class LinearClockApproximation:
     """Calculate an approximated value based on linear fitting."""
@@ -32,7 +32,7 @@ class LinearClockApproximation:
         self.max_length = length
         self.period = period
         self.channel = channel
-        self.tags = numpy.zeros(length, dtype=numpy.int64)
+        self.clock_tags = numpy.zeros(length, dtype=numpy.int64)
         self.delayed_clock_tag = -1
         self.timestamp_storage = numpy.zeros(1000, dtype=numpy.int64)
         self.channel_storage = numpy.zeros(1000, dtype=numpy.int32)
@@ -40,21 +40,21 @@ class LinearClockApproximation:
         self.storage_end = 0
         self.clock_time = -period
         self.clock_timestamps = numpy.zeros(3, dtype=numpy.int64)
-        self.denominator: int
         self.y_sum: int
         self.xy_sum: int
+        self.i_sum: int
         self.last_tag: int
-        self.position: int
+        self.clock_tag_pointer: int
         self.full: bool
         self._reset()
 
     def _reset(self):
         """Reset calculated values to start values."""
-        self.denominator = 0
+        self.i_sum = 0
         self.y_sum = 0
         self.xy_sum = 0
         self.last_tag = 0
-        self.position = 0
+        self.clock_tag_pointer = 0
         self.full = False
         self.delayed_clock_tag = -1
 
@@ -100,9 +100,10 @@ class LinearClockApproximation:
     def _process_clock_tag(self):
         """Add new clock tag and adjust calculated values."""
         if self.storage_start != self.storage_end:
-            if self.full or self.position > 1:
-                length = self.max_length if self.full else self.position
-                offset = (((length << 1) - 1) * self.y_sum + 3 * self.xy_sum) // self.denominator
+            if self.full or self.clock_tag_pointer > 1:
+                length = self.max_length if self.full else self.clock_tag_pointer
+                offset = (((length << 1) - 1) * self.y_sum + 3 * self.xy_sum) // self.i_sum
+                # print(offset, self.xy_sum)
                 self.clock_timestamps[:2] = self.clock_timestamps[1:]
                 self.clock_timestamps[2] = self.last_tag + offset
             else:
@@ -111,19 +112,15 @@ class LinearClockApproximation:
         step = tag - self.last_tag - self.period
         self.last_tag = tag
         if self.full:
-            front_to_end = tag - self.tags[self.position] - self.max_length * self.period
-            self.xy_sum += -self.y_sum + step * self.denominator - front_to_end * self.max_length
+            front_to_end = tag - self.clock_tags[self.clock_tag_pointer] - self.max_length * self.period
+            self.xy_sum += -self.y_sum + step * self.i_sum - front_to_end * self.max_length  # order is crucial here: First calculate xy_sum, then y_sum!
             self.y_sum += front_to_end - self.max_length * step
         else:
-            self.xy_sum += -self.y_sum + step * self.denominator
-            self.y_sum -= self.position * step
-            self.denominator += self.position + 1
-        self.tags[self.position] = tag
+            self.xy_sum += -self.y_sum + step * self.i_sum
+            self.y_sum -= self.clock_tag_pointer * step
+            self.i_sum += self.clock_tag_pointer + 1
+        self.clock_tags[self.clock_tag_pointer] = tag
         self.clock_time += self.period
-        self.position += 1
-        if self.position == self.max_length:
-            self.position = 0
-            self.full = True
 
     def _rescale(self, rescaled_tags: numpy.ndarray, rescaled_tags_index) -> int:
         cycle_length = self.clock_timestamps[1] - self.clock_timestamps[0]
@@ -154,8 +151,8 @@ class TimeTagGroup(TimeTagGroupBase):
         self.index = index
         self.debug_data = debug_data
 
-    def add_tag(self, channel: int, timetag: int):
-        self.channel_tags[channel] = timetag
+    def add_tag(self, tag: TimeTag):
+        self.channel_tags[tag.channel] = tag.time
 
     def get_missing_channels(self, channels: List[int]):
         missing = list(channels)
@@ -174,6 +171,15 @@ class MissingTimeTagGroup(TimeTagGroupBase):
 
     def get_channel_tags(self, channels: List[int]) -> List[float]:
         return [numpy.nan] * len(channels)
+
+
+class TimeTag:
+    def __init__(self, tag) -> None:
+        self.time: int = tag["time"]
+        self.channel: int = tag["channel"]
+
+    def __repr__(self):
+        return f"({self.channel}: {self.time})"
 
 
 class Clock:
@@ -195,8 +201,8 @@ if __name__ == "__main__":
     from numpy.random import random
     N_POINTS = 1000
     SIN_SIZE = 10000000
-    RANDOM = 1000
-    clk = LinearClockApproximation(1000, 100000, 7)
+    RANDOM = 0
+    clk = LinearClockApproximation(2, 100001, 7)
     clk_ticks = [i*100000 + int((random()-0.5)*RANDOM) for i in range(N_POINTS)]
     timetags = [i*100000 + 5000 for i in range(N_POINTS)]
     stream = [(tag, 7) for tag in clk_ticks] + [(tag, 1) for tag in timetags]
@@ -214,6 +220,6 @@ if __name__ == "__main__":
     clk.process_tags(tags, corrected)
 
     plt.figure()
-    plt.plot(numpy.diff(clk_ticks))
-    plt.plot(numpy.diff(corrected["time"])[:-4])
+    plt.plot(numpy.diff(clk_ticks) - 100000)
+    plt.plot(-(numpy.diff(corrected["time"])[:-4] - 100000))
     plt.show()

@@ -15,9 +15,9 @@ from PPStracking import PpsTracking
 SettingsType = Dict[Union[int, str], Union[Variable, "SettingsType"]]
 
 if exists("PULSE_STREAMER"):
-    # If a file PULSE_STREAMER is found in the current directory, DIVIDER is set to 10.
+    # If a file PULSE_STREAMER is found in the current directory, DIVIDER is set to 16.
     # Just needed for testing with Pulse Streamer, should otherwise always be 1
-    DIVIDER = 10
+    DIVIDER = 16
 else:
     DIVIDER = 1
 
@@ -48,16 +48,18 @@ class DisplayUpdater(Thread):
         while self.measurement.isRunning():
             timetag_number, message_number = self.measurement.getMeasurementStatus()
             if timetag_number > self.last_tag:
-                data = self.measurement.getData()
-                # print(data)
-                index = self.measurement.getIndex()
-                for ch in range(data.shape[0]):
-                    axis = self.plot.get_axes()[ch]
-                    axis.clear()
-                    axis.set_ylabel(f"{self.channel_names[ch]}\nOffset, ps")
-                    axis.scatter(index, data[ch, :])
-                axis.set_xlabel("Time tag index")
-                self.plot.canvas.draw_idle()
+                try:
+                    data = self.measurement.getData()
+                    index = self.measurement.getIndex()
+                    for ch in range(data.shape[0]):
+                        axis = self.plot.get_axes()[ch]
+                        axis.clear()
+                        axis.set_ylabel(f"{self.channel_names[ch]}\nOffset, ps")
+                        axis.scatter(index, data[ch, :])
+                    axis.set_xlabel("Time tag index")
+                    self.plot.canvas.draw_idle()
+                except:
+                    print("Display error")
                 self.last_tag = timetag_number
             if message_number > self.last_message:
                 for msg in self.measurement.getMessages(self.last_message):
@@ -164,6 +166,11 @@ class PPS_App:
             self.add_message(f"Cannot connect to Time Tagger '{serial}'")
             return
         self.tagger.reset()
+        self.tagger.setInputDelay(2, -24)
+        self.tagger.setInputDelay(3, -141)
+        self.tagger.setInputDelay(4, -147)
+        self.tagger.setInputDelay(5, -122)
+        self.tagger.setInputDelay(6, -185)
         channels = list()
         channel_names = list()
         for channel, value, name in zip(self.settings["channels"].keys(), self.settings["channels"].values(), self.settings["channel_names"].values()):
@@ -184,13 +191,13 @@ class PPS_App:
                                        reference_name=reference_name,
                                        folder=self.settings["storage_folder"].get())
         # self.filewriter = TimeTagger.FileWriter(tagger=self.tagger,
-        #                                         filename="test3.ttbin",
+        #                                         filename="test5.ttbin",
         #                                         channels=list(range(1, 9)))
         self.measurement.setTimetagsMaximum(self.settings["max_live_tags"].get())
         self._adjust_storage_time()
         self.fig.clear()
         self.fig.subplots(len(channels), 1, sharex="all")
-        self.fig.subplots_adjust(hspace=0, right=0.99, top=0.99, bottom=0.1, left=0.1)
+        self.fig.subplots_adjust(hspace=0, right=0.99, top=0.97, bottom=0.08, left=0.1)
         self.fig.canvas.draw_idle()
         updater = DisplayUpdater(self.measurement, self.fig, channels, self.add_message)
         updater.start()
