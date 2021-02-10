@@ -166,11 +166,6 @@ class PPS_App:
             self.add_message(f"Cannot connect to Time Tagger '{serial}'")
             return
         self.tagger.reset()
-        self.tagger.setInputDelay(2, -24)
-        self.tagger.setInputDelay(3, -141)
-        self.tagger.setInputDelay(4, -147)
-        self.tagger.setInputDelay(5, -122)
-        self.tagger.setInputDelay(6, -185)
         channels = list()
         channel_names = list()
         for channel, value, name in zip(self.settings["channels"].keys(), self.settings["channels"].values(), self.settings["channel_names"].values()):

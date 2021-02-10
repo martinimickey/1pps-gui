@@ -22,7 +22,6 @@ from numba.experimental import jitclass
            ("y_sum", int64),
            ("xy_sum", int64),
            ("i_sum", int64),
-           ("last_tag", int64),
            ("clock_tag_pointer", int32),
            ("full", b1)])
 class LinearClockApproximation:
@@ -43,7 +42,6 @@ class LinearClockApproximation:
         self.y_sum: int
         self.xy_sum: int
         self.i_sum: int
-        self.last_tag: int
         self.clock_tag_pointer: int
         self.full: bool
         self._reset()
@@ -53,8 +51,7 @@ class LinearClockApproximation:
         self.i_sum = 0
         self.y_sum = 0
         self.xy_sum = 0
-        self.last_tag = 0
-        self.clock_tag_pointer = 0
+        self.clock_tag_pointer = self.max_length - 1
         self.full = False
         self.delayed_clock_tag = -1
 
@@ -99,32 +96,32 @@ class LinearClockApproximation:
 
     def _process_clock_tag(self):
         """Add new clock tag and adjust calculated values."""
+        last_tag = self.clock_tags[self.clock_tag_pointer]
+        self.clock_tag_pointer += 1
+        if self.clock_tag_pointer == self.max_length:
+            self.clock_tag_pointer = 0
         if self.storage_start != self.storage_end:
-            if self.full or self.clock_tag_pointer > 1:
+            self.clock_timestamps[:2] = self.clock_timestamps[1:]
+            if self.full or self.clock_tag_pointer > 2:  # We need at least 3 tags for a non-trivial fit
                 length = self.max_length if self.full else self.clock_tag_pointer
                 offset = (((length << 1) - 1) * self.y_sum + 3 * self.xy_sum) // self.i_sum
-                # print(offset, self.xy_sum)
-                self.clock_timestamps[:2] = self.clock_timestamps[1:]
-                self.clock_timestamps[2] = self.last_tag + offset
+                self.clock_timestamps[2] = last_tag + offset
             else:
-                self.clock_timestamps[2] = self.last_tag
+                self.clock_timestamps[2] = last_tag
         tag = self.delayed_clock_tag
-        step = tag - self.last_tag - self.period
-        self.last_tag = tag
+        step = tag - last_tag - self.period
         if self.full:
             front_to_end = tag - self.clock_tags[self.clock_tag_pointer] - self.max_length * self.period
             self.xy_sum += -self.y_sum + step * self.i_sum - front_to_end * self.max_length  # order is crucial here: First calculate xy_sum, then y_sum!
             self.y_sum += front_to_end - self.max_length * step
         else:
+            length = self.clock_tag_pointer + 1
             self.xy_sum += -self.y_sum + step * self.i_sum
             self.y_sum -= self.clock_tag_pointer * step
-            self.i_sum += self.clock_tag_pointer + 1
+            self.i_sum += length
+            self.full = length == self.max_length
         self.clock_tags[self.clock_tag_pointer] = tag
         self.clock_time += self.period
-        self.clock_tag_pointer += 1
-        if self.clock_tag_pointer == self.max_length:
-            self.clock_tag_pointer = 0
-            self.full = True
 
     def _rescale(self, rescaled_tags: numpy.ndarray, rescaled_tags_index) -> int:
         cycle_length = self.clock_timestamps[1] - self.clock_timestamps[0]
