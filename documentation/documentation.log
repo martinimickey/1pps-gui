@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.14159265-2.6-1.40.21 (MiKTeX 20.11) (preloaded format=pdflatex 2020.11.3)  10 FEB 2021 13:32
+This is pdfTeX, Version 3.14159265-2.6-1.40.21 (MiKTeX 20.11) (preloaded format=pdflatex 2020.11.3)  10 FEB 2021 17:21
 entering extended mode
 **c:/Users/Mirco/Documents/Projects/PTB/PPS_GUI/documentation/documentation.tex
 (c:/Users/Mirco/Documents/Projects/PTB/PPS_GUI/documentation/documentation.tex
@@ -224,27 +224,36 @@ chapter 2.
 [3
 
 ] [4]
+chapter 3.
+
+Overfull \hbox (7.6679pt too wide) in paragraph at lines 85--98
+\OT1/cmr/m/n/10.95 The fol-low-ing names are used as at-tribute in the Python class \OT1/cmtt/m/n/10.95 LinearClockApproximation
+ []
+
+[5
+
+]
 
 LaTeX3 Info: Redefining command \BeforeClosingMainAux with sig. 'm' on line
-(LaTeX3)     82.
+(LaTeX3)     98.
 
 
 LaTeX3 Info: Redefining command \BeforeClosingMainAux with sig. 'm' on line
-(LaTeX3)     82.
+(LaTeX3)     98.
 
  (c:/Users\Mirco\Documents\Projects\PTB\PPS_GUI\documentation\documentation.aux) ) 
 Here is how much of TeX's memory you used:
- 3334 strings out of 479765
- 78143 string characters out of 2866191
+ 3339 strings out of 479765
+ 78240 string characters out of 2866191
  502552 words of memory out of 3000000
- 20387 multiletter control sequences out of 15000+200000
- 539014 words of font info for 42 fonts, out of 3000000 for 9000
+ 20391 multiletter control sequences out of 15000+200000
+ 539182 words of font info for 43 fonts, out of 3000000 for 9000
  1141 hyphenation exceptions out of 8191
- 106i,8n,111p,10668b,270s stack positions out of 5000i,500n,10000p,200000b,50000s
-<C:/Users/Mirco/AppData/Local/Programs/MiKTeX 2.9/fonts/type1/public/amsfonts/cm/cmex10.pfb><C:/Users/Mirco/AppData/Local/Programs/MiKTeX 2.9/fonts/type1/public/amsfonts/cm/cmmi10.pfb><C:/Users/Mirco/AppData/Local/Programs/MiKTeX 2.9/fonts/type1/public/amsfonts/cm/cmmi8.pfb><C:/Users/Mirco/AppData/Local/Programs/MiKTeX 2.9/fonts/type1/public/amsfonts/cm/cmr10.pfb><C:/Users/Mirco/AppData/Local/Programs/MiKTeX 2.9/fonts/type1/public/amsfonts/cm/cmr8.pfb><C:/Users/Mirco/AppData/Local/Programs/MiKTeX 2.9/fonts/type1/public/amsfonts/cm/cmssbx10.pfb><C:/Users/Mirco/AppData/Local/Programs/MiKTeX 2.9/fonts/type1/public/amsfonts/cm/cmsy10.pfb><C:/Users/Mirco/AppData/Local/Programs/MiKTeX 2.9/fonts/type1/public/amsfonts/cm/cmsy8.pfb>
-Output written on c:/Users\Mirco\Documents\Projects\PTB\PPS_GUI\documentation\documentation.pdf (4 pages, 94364 bytes).
+ 106i,10n,111p,10668b,270s stack positions out of 5000i,500n,10000p,200000b,50000s
+<C:/Users/Mirco/AppData/Local/Programs/MiKTeX 2.9/fonts/type1/public/amsfonts/cm/cmex10.pfb><C:/Users/Mirco/AppData/Local/Programs/MiKTeX 2.9/fonts/type1/public/amsfonts/cm/cmmi10.pfb><C:/Users/Mirco/AppData/Local/Programs/MiKTeX 2.9/fonts/type1/public/amsfonts/cm/cmmi8.pfb><C:/Users/Mirco/AppData/Local/Programs/MiKTeX 2.9/fonts/type1/public/amsfonts/cm/cmr10.pfb><C:/Users/Mirco/AppData/Local/Programs/MiKTeX 2.9/fonts/type1/public/amsfonts/cm/cmr8.pfb><C:/Users/Mirco/AppData/Local/Programs/MiKTeX 2.9/fonts/type1/public/amsfonts/cm/cmssbx10.pfb><C:/Users/Mirco/AppData/Local/Programs/MiKTeX 2.9/fonts/type1/public/amsfonts/cm/cmsy10.pfb><C:/Users/Mirco/AppData/Local/Programs/MiKTeX 2.9/fonts/type1/public/amsfonts/cm/cmsy8.pfb><C:/Users/Mirco/AppData/Local/Programs/MiKTeX 2.9/fonts/type1/public/amsfonts/cm/cmtt10.pfb>
+Output written on c:/Users\Mirco\Documents\Projects\PTB\PPS_GUI\documentation\documentation.pdf (5 pages, 110398 bytes).
 PDF statistics:
- 47 PDF objects out of 1000 (max. 8388607)
+ 54 PDF objects out of 1000 (max. 8388607)
  0 named destinations out of 1000 (max. 500000)
  1 words of extra memory for PDF output out of 10000 (max. 10000000)
 
