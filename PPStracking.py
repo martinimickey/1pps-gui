@@ -49,7 +49,7 @@ class PpsTracking(TimeTagger.CustomMeasurement):
         self.clock = Clock(clock, clock_period, self.dtype) if clock else None
         self.period = period
         self.channel_names = []
-        self.reference_name = reference_name
+        self.reference_name = reference_name if reference_name else "Reference"
         for channel, name in zip(self.channels, channel_names if channel_names else [""] * len(channels)):
             self.channel_names.append(name if name else f"Channel {channel}")
         self.reference = reference
@@ -162,7 +162,6 @@ class PpsTracking(TimeTagger.CustomMeasurement):
                         abs_distance = [abs(d) for d in distance]
                         if min(abs_distance) < self.period:
                             self._channel_tag_offest[channel] = distance[abs_distance.index(min(abs_distance))]
-            print(self._channel_tag_offest)
 
     def clear_impl(self):
         pass
