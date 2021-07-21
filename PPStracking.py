@@ -28,7 +28,8 @@ class PpsTracking(TimeTagger.CustomMeasurement):
                  folder: str = None,
                  channel_names: Optional[List[str]] = None,
                  reference_name: str = "Reference",
-                 debug_to_file: bool = False):
+                 debug_to_file: bool = False,
+                 unscaled_to_file: bool = False):
         TimeTagger.CustomMeasurement.__init__(self, tagger)
         self.tagger = tagger
         self.data_file: Optional[TextIOWrapper] = None
@@ -65,6 +66,7 @@ class PpsTracking(TimeTagger.CustomMeasurement):
         except AttributeError:
             debug_to_file = False
         self.debug_to_file = debug_to_file
+        self.unscaled_to_file = unscaled_to_file
         for channel in channels:
             self.register_channel(channel)
         self.register_channel(reference)
@@ -110,16 +112,18 @@ class PpsTracking(TimeTagger.CustomMeasurement):
         tag_index = 0
         incoming_tags = incoming_tags[numpy.logical_or(numpy.isin(incoming_tags["channel"], self._all_channels), incoming_tags["type"] > 0)]
         if self.clock:
-            incoming_tags = self.clock.process_tags(incoming_tags[tag_index:])
-        for tag in incoming_tags:
+            incoming_tags, unscaled_tags = self.clock.process_tags(incoming_tags[tag_index:])
+        else:
+            unscaled_tags = incoming_tags
+        for tag, unscaled_tag in zip(incoming_tags, unscaled_tags):
             if tag["channel"] == self.reference:
                 self._process_reference_tag()
             if tag["type"] == 0:
                 if tag["channel"] == self.reference:
                     self._last_reference_time = current_time
-                    self._next_tag_group(tag["time"], current_time)
+                    self._next_tag_group(tag["time"], unscaled_tag["time"], current_time)
                 else:
-                    self._channel_tags.append(TimeTag(tag))
+                    self._channel_tags.append(TimeTag(tag, unscaled_tag))
             else:
                 if tag["type"] == 4:
                     if tag["channel"] == self.reference:
@@ -199,10 +203,10 @@ class PpsTracking(TimeTagger.CustomMeasurement):
             if len(self._timetags) > self._max_timetags:
                 self._timetags = self._timetags[-self._max_timetags:]
 
-    def _next_tag_group(self, timetag: int, current_time: datetime):
+    def _next_tag_group(self, timetag: int, unscaled_timetag: int, current_time: datetime):
         """Create a new group of tags for a given reference tag."""
         self._reference_tag = TimeTagGroup(
-            self._timetag_index, timetag, current_time, self.get_sensor_data(1) if self.debug_to_file else [])
+            self._timetag_index, timetag, unscaled_timetag, current_time, self.get_sensor_data(1) if self.debug_to_file else [])
         self._timetag_index += 1
 
     def _missing_tag_group(self, current_time: datetime):
@@ -220,7 +224,9 @@ class PpsTracking(TimeTagger.CustomMeasurement):
         writer = csv.writer(self.data_file, delimiter=COLUMN_DELIMITER)
         debug_header = self.get_sensor_data(0) if self.debug_to_file else []
         writer.writerow(["Index", "UTC", self.reference_name] +
-                        self.channel_names + debug_header)
+                        self.channel_names +
+                        [name + " (raw)" for name in (["Reference"] + self.channel_names) if self.unscaled_to_file] +
+                        debug_header)
         self._new_message("New file opened: "+filename)
 
     def _close_file(self):
@@ -243,5 +249,7 @@ class PpsTracking(TimeTagger.CustomMeasurement):
         if self.data_file:
             writer = csv.writer(self.data_file, delimiter=COLUMN_DELIMITER)
             writer.writerow([tag.index, tag.time.replace(microsecond=0).isoformat(), tag.reference_tag] +
-                            tag.get_channel_tags(self.channels) + tag.debug_data)
+                            tag.get_channel_tags(self.channels) +
+                            (tag.get_unscaled_tags(self.channels) if self.unscaled_to_file else []) +
+                            tag.debug_data)
         self._last_time_check = tag.time

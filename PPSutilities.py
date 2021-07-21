@@ -1,7 +1,7 @@
 """Utilities for 1PPS measurements."""
 
 from __future__ import annotations
-from typing import List
+from typing import List, Tuple, Dict
 from datetime import datetime
 import numpy
 from numba.types import int32, int64, b1
@@ -135,10 +135,11 @@ class LinearClockApproximation:
         cycle_length = self.clock_timestamps[1] - self.clock_timestamps[0]
         while self.storage_start != self.storage_end and self.timestamp_storage[self.storage_start] < self.clock_timestamps[1]:
             if cycle_length > 0:
-                rescaled_tags[rescaled_tags_index]["type"] = 0
-                rescaled_tags[rescaled_tags_index]["missed_events"] = 0
-                rescaled_tags[rescaled_tags_index]["time"] = self.clock_time + (self.period * (self.timestamp_storage[self.storage_start] - self.clock_timestamps[0])) // cycle_length
-                rescaled_tags[rescaled_tags_index]["channel"] = self.channel_storage[self.storage_start]
+                rescaled_tags[rescaled_tags_index, 0]["type"] = 0
+                rescaled_tags[rescaled_tags_index, 0]["missed_events"] = 0
+                rescaled_tags[rescaled_tags_index, 0]["time"] = self.clock_time + (self.period * (self.timestamp_storage[self.storage_start] - self.clock_timestamps[0])) // cycle_length
+                rescaled_tags[rescaled_tags_index, 1]["time"] = self.timestamp_storage[self.storage_start]
+                rescaled_tags[rescaled_tags_index, 0]["channel"] = self.channel_storage[self.storage_start]
                 rescaled_tags_index += 1
             self.storage_start = self._increment_storage_pointer(self.storage_start)
         return rescaled_tags_index
@@ -152,16 +153,19 @@ class TimeTagGroupBase:
 
 
 class TimeTagGroup(TimeTagGroupBase):
-    def __init__(self, index, reference_tag: int, time: datetime, debug_data: List[str]):
+    def __init__(self, index, reference_tag: int, unscaled_reference: int, time: datetime, debug_data: List[str]):
         super().__init__(time)
         self.reference_tag = reference_tag
-        self.channel_tags = dict()
+        self.unscaled_reference = unscaled_reference
+        self.channel_tags: Dict[int, int] = dict()
+        self.unscaled: Dict[int, int] = dict()
         self.time = time
         self.index = index
         self.debug_data = debug_data
 
     def add_tag(self, tag: TimeTag):
         self.channel_tags[tag.channel] = tag.time
+        self.unscaled[tag.channel] = tag.unscaled
 
     def get_missing_channels(self, channels: List[int]):
         missing = list(channels)
@@ -175,6 +179,9 @@ class TimeTagGroup(TimeTagGroupBase):
     def get_channel_tags(self, channels: List[int]) -> List[float]:
         return [self.channel_tags[channel] - self.reference_tag if channel in self.channel_tags else numpy.nan for channel in channels]
 
+    def get_unscaled_tags(self, channels: List[int]) -> List[int]:
+        return [self.unscaled_reference] + [self.unscaled[channel] if channel in self.unscaled else -1 for channel in channels]
+
 
 class MissingTimeTagGroup(TimeTagGroupBase):
 
@@ -183,9 +190,10 @@ class MissingTimeTagGroup(TimeTagGroupBase):
 
 
 class TimeTag:
-    def __init__(self, tag) -> None:
+    def __init__(self, tag, unscaled_tag) -> None:
         self.time: int = tag["time"]
         self.channel: int = tag["channel"]
+        self.unscaled: int = unscaled_tag["time"]
 
     def __repr__(self):
         return f"({self.channel}: {self.time})"
@@ -198,12 +206,12 @@ class Clock:
         self.average_length = average_length
         self.data = LinearClockApproximation(
             self.average_length, period, channel)
-        self.rescaled_tags = numpy.zeros(16*period//2000, dtype=dtype)
+        self.rescaled_tags = numpy.zeros([16*period//2000, 2], dtype=dtype)
 
-    def process_tags(self, tags: numpy.array) -> numpy.ndarray:
+    def process_tags(self, tags: numpy.array) -> Tuple[numpy.ndarray, numpy.ndarray]:
         """Process a set of incoming tags."""
         index = self.data.process_tags(tags, self.rescaled_tags)
-        return self.rescaled_tags[:index]
+        return self.rescaled_tags[:index, 0], self.rescaled_tags[:index, 1]
 
 
 if __name__ == "__main__":

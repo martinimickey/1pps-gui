@@ -78,11 +78,13 @@ class PPS_App:
         self.measurement: Optional[PpsTracking] = None
         self.tagger: Optional[TimeTagger.TimeTagger] = None
         taggers = TimeTagger.scanTimeTagger()
+        print(taggers)
         self.settings: SettingsType = dict(serial=tk.StringVar(self.root, taggers[0] if taggers else ""),
                                            channels={ch: tk.StringVar(self.root, ChannelRoles.UNUSED.value) for ch in range(1, 9)},
                                            channel_names={ch: tk.StringVar(self.root, "") for ch in range(1, 9)},
                                            storage_folder=StringVar(self.root, ""),
                                            store_debug_info=BooleanVar(self.root, False),
+                                           store_unscaled_data=BooleanVar(self.root, False),
                                            storage_time={key: StringVar(self.root, "00", key) for key in ("hour", "minute", "second")},
                                            max_live_tags=IntVar(self.root, 300),
                                            clock_divider=IntVar(self.root, 1))
@@ -176,13 +178,20 @@ class PPS_App:
         self.tagger.setEventDivider(reference, DIVIDER)
         if clock:
             self.tagger.setEventDivider(clock, self.settings["clock_divider"].get())
+        backend_rescaling = hasattr(self.tagger, "setRescaling")
+        clock_period = 100000*self.settings["clock_divider"].get()
+        if backend_rescaling:
+            self.tagger.setRescaling(clock, clock_period)
+            # pass
+        print(backend_rescaling)
         self.measurement = PpsTracking(self.tagger,
                                        channels=channels,
                                        reference=reference,
-                                       clock=clock,
-                                       clock_period=100000*self.settings["clock_divider"].get(),
+                                       clock=None if backend_rescaling else clock,
+                                       clock_period=clock_period,
                                        channel_names=channel_names,
                                        debug_to_file=self.settings["store_debug_info"].get(),
+                                       unscaled_to_file=self.settings["store_unscaled_data"].get(),
                                        reference_name=reference_name,
                                        folder=self.settings["storage_folder"].get())
         # self.filewriter = TimeTagger.FileWriter(tagger=self.tagger,
@@ -277,8 +286,8 @@ class SettingsWindow(ModalWindow):
         ttk.Label(self, text="Clock divider").grid(row=10, column=0, sticky=tk.E, pady=10)
         tk.Spinbox(self, textvariable=settings["clock_divider"], from_=1, to=10000, width=5, state="readonly").grid(row=10, column=1)
 
-        ttk.Label(self, text="Store debug information").grid(row=11, column=0, sticky=tk.E, pady=10)
-        tk.Checkbutton(self, variable=settings["store_debug_info"]).grid(row=11, column=1)
+        # ttk.Label(self, text="Store debug information").grid(row=11, column=0, sticky=tk.E, pady=10)
+        # tk.Checkbutton(self, variable=settings["store_debug_info"]).grid(row=11, column=1)
 
 
 class StorageConfigWindow(ModalWindow):
@@ -288,9 +297,11 @@ class StorageConfigWindow(ModalWindow):
         browser = tk.Frame(self)
         browser.grid(row=0, column=1, sticky=tk.E+tk.W)
         self.filename = settings["storage_folder"]
+
         tk.Label(self, text="Data folder").grid(row=0, column=0, sticky=tk.E)
         tk.Entry(browser, textvariable=self.filename, state="disabled").pack(side=tk.LEFT, fill=tk.X, expand=1)
         tk.Button(browser, text="Browse", command=self.browse_folder).pack(side=tk.RIGHT)
+
         tk.Label(self, text="New file time").grid(row=1, column=0, sticky=tk.E)
         self.time_display = tk.Frame(self)
         self.time_display.grid(row=1, column=1, sticky=tk.W)
@@ -307,6 +318,12 @@ class StorageConfigWindow(ModalWindow):
                    width=10,
                    from_=0,
                    to=9999999999).grid(row=2, column=1, sticky=tk.W)
+
+        tk.Label(self, text="Store debug info").grid(row=3, column=0, sticky=tk.E)
+        tk.Checkbutton(self, variable=settings["store_debug_info"]).grid(row=3, column=1, sticky=tk.W)
+
+        tk.Label(self, text="Store unscaled tags").grid(row=4, column=0, sticky=tk.E)
+        tk.Checkbutton(self, variable=settings["store_unscaled_data"]).grid(row=4, column=1, sticky=tk.W)
 
     def _time_digit(self, settings: dict, key: str):
         max_value = dict(hour=23, minute=59, second=59)
