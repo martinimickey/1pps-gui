@@ -182,7 +182,6 @@ class PPS_App:
         clock_period = 100000*self.settings["clock_divider"].get()
         if backend_rescaling:
             self.tagger.setRescaling(clock, clock_period)
-            # pass
         print(backend_rescaling)
         self.measurement = PpsTracking(self.tagger,
                                        channels=channels,
