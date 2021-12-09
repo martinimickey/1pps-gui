@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import BooleanVar, IntVar, StringVar, Variable, ttk, messagebox, Widget
+from tkinter import BooleanVar, IntVar, StringVar, Variable, ttk, messagebox, Widget, DoubleVar
 from threading import Thread
 from datetime import time
 from os.path import dirname, realpath, exists
@@ -14,13 +14,6 @@ from PPStracking import PpsTracking
 
 SettingsType = Dict[Union[int, str], Union[Variable, "SettingsType"]]
 
-if exists("PULSE_STREAMER"):
-    # If a file PULSE_STREAMER is found in the current directory, DIVIDER is set to 16.
-    # Just needed for testing with Pulse Streamer, should otherwise always be 1
-    DIVIDER = 10
-else:
-    DIVIDER = 1
-
 
 def this_folder():
     return dirname(realpath(__file__))
@@ -30,7 +23,7 @@ class ChannelRoles(Enum):
     UNUSED = "Unused"
     REFERENCE = "Use as Reference"
     CHANNEL = "Signal channel"
-    CLOCK = "10 MHz clock"
+    CLOCK = "External clock"
 
 
 class DisplayUpdater(Thread):
@@ -115,13 +108,12 @@ class PPS_App:
                                            channels={ch: Input(self.root, ch) for ch in range(1, 19)},
                                            resolution=tk.StringVar(self.root, next(mode for mode in TimeTagger.Resolution).name),
                                            connect=tk.BooleanVar(self.root, False),
-                                           #    channel_names={ch: tk.StringVar(self.root, "") for ch in range(1, 9)},
                                            storage_folder=StringVar(self.root, ""),
                                            store_debug_info=BooleanVar(self.root, False),
-                                           store_unscaled_data=BooleanVar(self.root, False),
                                            storage_time={key: StringVar(self.root, "00", key) for key in ("hour", "minute", "second")},
                                            max_live_tags=IntVar(self.root, 300),
-                                           clock_divider=IntVar(self.root, 1))
+                                           clock_divider=IntVar(self.root, 1),
+                                           clock_frequency=DoubleVar(self.root, 1E7))
         self.__last_connect_setting = None
         self.settings["connect"].trace_add("write", lambda *args: self._connect_tagger(False))
         self.settings["resolution"].trace_add("write", lambda *args: self._connect_tagger(True))
@@ -241,27 +233,22 @@ class PPS_App:
         self.settings["connect"].set(True)
         if self.tagger is None:
             return
-        self.tagger.reset()
-        for channel in channels + [reference]:
-            self.tagger.setEventDivider(channel, DIVIDER)
-        backend_rescaling = False
-        clock_period = 100000
+        # self.tagger.disableSoftwareClock()
+        # self.tagger.reset()
         if clock:
-            backend_rescaling = hasattr(self.tagger, "setSoftwareClock")
             self.tagger.setEventDivider(clock, self.settings["clock_divider"].get())
-            clock_period = 100000*self.settings["clock_divider"].get()
-            if backend_rescaling:
-                self.tagger.setSoftwareClock(clock, clock_period)
-            else:
-                self.tagger.disableSoftwareClock()
+            try:
+                self.tagger.setSoftwareClock(input_channel=clock,
+                                             input_frequency=self.settings["clock_frequency"].get()/self.settings["clock_divider"].get())
+            except RuntimeError:
+                return
+        else:
+            self.tagger.disableSoftwareClock()
         self.measurement = PpsTracking(self.tagger,
                                        channels=channels,
                                        reference=reference,
-                                       clock=None if backend_rescaling else clock,
-                                       clock_period=clock_period,
                                        channel_names=channel_names,
                                        debug_to_file=self.settings["store_debug_info"].get(),
-                                       unscaled_to_file=self.settings["store_unscaled_data"].get(),
                                        reference_name=reference_name,
                                        folder=self.settings["storage_folder"].get())
         self.measurement.setTimetagsMaximum(self.settings["max_live_tags"].get())
@@ -368,9 +355,12 @@ class SettingsWindow(ModalWindow):
             resolution_label.grid(row=i+1, column=4, sticky=tk.E)
             phys_input.add_element(resolution_label)
 
-        divider_row = 5+len(settings["channels"])
+        frequency_row = 5+len(settings["channels"])
+        ttk.Label(self, text="Clock frequency").grid(row=frequency_row, column=0, sticky=tk.E, pady=10)
+        tk.Spinbox(self, textvariable=settings["clock_frequency"], from_=1E3, to=475E6, width=12).grid(row=frequency_row, column=1)
+        divider_row = frequency_row + 1
         ttk.Label(self, text="Clock divider").grid(row=divider_row, column=0, sticky=tk.E, pady=10)
-        tk.Spinbox(self, textvariable=settings["clock_divider"], from_=1, to=10000, width=5, state="readonly").grid(row=divider_row, column=1)
+        tk.Spinbox(self, textvariable=settings["clock_divider"], from_=1, to=10000, width=5).grid(row=divider_row, column=1)
 
     def role(self, var, row, col) -> ttk.OptionMenu:
         menu = ttk.OptionMenu(self, var, var.get(), *[item.value for item in ChannelRoles])
@@ -409,9 +399,6 @@ class StorageConfigWindow(ModalWindow):
 
         tk.Label(self, text="Store debug info").grid(row=3, column=0, sticky=tk.E)
         tk.Checkbutton(self, variable=settings["store_debug_info"]).grid(row=3, column=1, sticky=tk.W)
-
-        tk.Label(self, text="Store unscaled tags").grid(row=4, column=0, sticky=tk.E)
-        tk.Checkbutton(self, variable=settings["store_unscaled_data"]).grid(row=4, column=1, sticky=tk.W)
 
     def _time_digit(self, settings: dict, key: str):
         max_value = dict(hour=23, minute=59, second=59)
