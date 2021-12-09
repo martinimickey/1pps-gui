@@ -4,5 +4,3 @@ settings.dat
 playground/
 *.ttbin
 *.csv
-documentation/*
-!documentation/*.tex
