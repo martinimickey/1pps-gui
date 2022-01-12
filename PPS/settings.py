@@ -4,7 +4,7 @@ from enum import Enum
 import pickle
 import tkinter as tk
 from tkinter import BooleanVar, IntVar, StringVar, Variable, ttk, messagebox, Widget, DoubleVar
-from PPSutilities import AbstractTimeTaggerProxy
+from .utilities import AbstractTimeTaggerProxy
 import TimeTagger
 
 

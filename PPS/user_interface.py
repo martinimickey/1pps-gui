@@ -8,9 +8,9 @@ from typing import Iterable, Optional, List, Callable, Type
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 from matplotlib.figure import Figure
 import TimeTagger
-from PPStracking import PpsTracking
-from PPSutilities import AbstractTimeTaggerProxy, NetworkTimeTaggerProxy, USBTimeTaggerProxy
-from PPSsettings import Input, Settings, ChannelRoles
+from .measurement import PpsTracking
+from .utilities import AbstractTimeTaggerProxy, NetworkTimeTaggerProxy, USBTimeTaggerProxy
+from .settings import Input, Settings, ChannelRoles
 
 
 def this_folder():
@@ -52,7 +52,7 @@ class DisplayUpdater(Thread):
             sleep(0.1)
 
 
-class PPS_App:
+class PPS_GUI:
     """The graphical user interface for tracking PPS signals."""
 
     def __init__(self):
@@ -252,7 +252,7 @@ class PPS_App:
 
 
 class ModalWindow(tk.Toplevel):
-    def __init__(self, parent: PPS_App, title: str):
+    def __init__(self, parent: PPS_GUI, title: str):
         super().__init__()
         self.iconbitmap(this_folder() + "/iconTT.ico")
         self.parent = parent.root
@@ -267,7 +267,7 @@ class ModalWindow(tk.Toplevel):
 
 
 class SettingsWindow(ModalWindow):
-    def __init__(self, parent: PPS_App):
+    def __init__(self, parent: PPS_GUI):
         # setters = parent.current_tagger.allows_setters()
         self.__parent = parent
         super().__init__(parent=parent, title="Settings")
@@ -319,7 +319,7 @@ class SettingsWindow(ModalWindow):
 
 
 class StorageConfigWindow(ModalWindow):
-    def __init__(self, parent: PPS_App):
+    def __init__(self, parent: PPS_GUI):
         super().__init__(parent=parent, title="Storage configuration")
         tk.Grid.columnconfigure(self, 1, weight=1)
         browser = tk.Frame(self)
@@ -368,5 +368,5 @@ class StorageConfigWindow(ModalWindow):
 
 
 if __name__ == "__main__":
-    window = PPS_App()
+    window = PPS_GUI()
     window.run()

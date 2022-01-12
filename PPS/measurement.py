@@ -7,7 +7,7 @@ from os.path import isdir
 from os import getcwd
 from datetime import datetime, timedelta, timezone, time
 import numpy
-from PPSutilities import TimeTagGroup, MissingTimeTagGroup, TimeTagGroupBase, TimeTag
+from .utilities import TimeTagGroup, MissingTimeTagGroup, TimeTagGroupBase, TimeTag
 import TimeTagger
 
 NO_SIGNAL_THRESHOLD = timedelta(seconds=5)
