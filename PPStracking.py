@@ -31,15 +31,16 @@ class PpsTracking(TimeTagger.CustomMeasurement):
         self.data_file: Optional[TextIOWrapper] = None
         self._channel_tags: List[TimeTag] = list()
         self._reference_tag: Optional[TimeTagGroup] = None
-        self._last_signal_time = self._now()
-        self._last_reference_time = None
+        self.__last_signal_time = self._now()
+        self.__last_reference_time = None
         self._last_time_check = self._now()
         self._messages = list()
-        self._timetags: List[TimeTagGroupBase] = list()
-        self._max_timetags = 300
+        self.__timetags: List[TimeTagGroupBase] = list()
+        self.__max_timetags = 300
         self._timetag_index = 0
         self._message_index = 0
-        self._all_channels = list()
+        self.__all_channels = [reference]
+        self.__all_channels += channels
         self._channel_tag_offest = dict()
 
         self.channels = channels
@@ -72,21 +73,17 @@ class PpsTracking(TimeTagger.CustomMeasurement):
         self._close_file()
         self.stop()
 
-    def register_channel(self, channel: int):
-        super().register_channel(channel)
-        self._all_channels.append(channel)
-
     def getData(self):
         self._lock()
         data = numpy.empty(
-            [len(self.channels), len(self._timetags)], dtype=float)
-        for index, tag in enumerate(self._timetags):
+            [len(self.channels), len(self.__timetags)], dtype=float)
+        for index, tag in enumerate(self.__timetags):
             data[:, index] = tag.get_channel_tags(self.channels)
         self._unlock()
         return data
 
     def getIndex(self):
-        return numpy.arange(self._timetag_index - len(self._timetags), self._timetag_index)
+        return numpy.arange(self._timetag_index - len(self.__timetags), self._timetag_index)
 
     def getMeasurementStatus(self):
         return self._timetag_index, self._message_index
@@ -97,13 +94,13 @@ class PpsTracking(TimeTagger.CustomMeasurement):
     def process(self, incoming_tags, begin_time, end_time):
         """Method called by TimeTagger.CustomMeasurement for processing of incoming time tags."""
         current_time = self._now()
-        incoming_tags = incoming_tags[numpy.logical_or(numpy.isin(incoming_tags["channel"], self._all_channels), incoming_tags["type"] > 0)]
+        incoming_tags = incoming_tags[numpy.logical_or(numpy.isin(incoming_tags["channel"], self.__all_channels), incoming_tags["type"] > 0)]
         for tag in incoming_tags:
             if tag["channel"] == self.reference:
                 self._process_reference_tag()
             if tag["type"] == 0:
                 if tag["channel"] == self.reference:
-                    self._last_reference_time = current_time
+                    self.__last_reference_time = current_time
                     self._next_tag_group(tag["time"], current_time)
                 else:
                     self._channel_tags.append(TimeTag(tag))
@@ -112,11 +109,11 @@ class PpsTracking(TimeTagger.CustomMeasurement):
                     if tag["channel"] == self.reference:
                         for i in range(tag["missed_events"]):
                             self._missing_tag_group(current_time=current_time)
-            self._last_signal_time = current_time
-        if current_time - self._last_signal_time > NO_SIGNAL_THRESHOLD:
+            self.__last_signal_time = current_time
+        if current_time - self.__last_signal_time > NO_SIGNAL_THRESHOLD:
             self._new_message(
                 "No incoming signals for more than " + str(NO_SIGNAL_THRESHOLD.seconds) + " s.", current_time)
-            self._last_signal_time = current_time
+            self.__last_signal_time = current_time
 
     def _select_tags_within_range(self):
         """Add the timetags for the last reference tag. Called when a new reference tag arrives."""
@@ -154,7 +151,7 @@ class PpsTracking(TimeTagger.CustomMeasurement):
         pass
 
     def setTimetagsMaximum(self, value: int):
-        self._max_timetags = value if value > 0 else 0
+        self.__max_timetags = value if value > 0 else 0
 
     def setFolder(self, folder):
         self.folder = folder
@@ -181,10 +178,10 @@ class PpsTracking(TimeTagger.CustomMeasurement):
             if missing := self._reference_tag.get_missing_channels(self.channels):
                 self._new_message("Tags missing: " +
                                   ", ".join([f"input {ch}" for ch in missing]))
-            self._timetags.append(self._reference_tag)
+            self.__timetags.append(self._reference_tag)
             self._store_timetag(self._reference_tag)
-            if len(self._timetags) > self._max_timetags:
-                self._timetags = self._timetags[-self._max_timetags:]
+            if len(self.__timetags) > self.__max_timetags:
+                self.__timetags = self.__timetags[-self.__max_timetags:]
 
     def _next_tag_group(self, timetag: int, current_time: datetime):
         """Create a new group of tags for a given reference tag."""
@@ -194,7 +191,7 @@ class PpsTracking(TimeTagger.CustomMeasurement):
 
     def _missing_tag_group(self, current_time: datetime):
         self._reference_tag = None
-        self._timetags.append(MissingTimeTagGroup(current_time))
+        self.__timetags.append(MissingTimeTagGroup(current_time))
         self._timetag_index += 1
 
     def get_sensor_data(self, col: int) -> list:
@@ -226,7 +223,7 @@ class PpsTracking(TimeTagger.CustomMeasurement):
                 if self._last_time_check.time() < self.new_file_time <= tag.time.time():
                     self._open_file(tag.time)
             else:
-                if tag.time.time() >= self.new_file_time or self.new_file_time >= self._last_reference_time.time():
+                if tag.time.time() >= self.new_file_time or self.new_file_time >= self.__last_reference_time.time():
                     self._open_file(tag.time)
         if self.data_file:
             writer = csv.writer(self.data_file, delimiter=COLUMN_DELIMITER)
