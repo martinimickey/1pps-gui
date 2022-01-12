@@ -19,4 +19,14 @@ Run the `PPS_App.py` script from your working directory by calling
 python "<your cloned repository path>/PPS_App.py"
 ```
 
-in an appropriate command shell. The GUI opens
+in an appropriate Python command shell.
+The GUI opens and is primarily controlled via the menu.
+
+Prepare your Time Tagger under `File -> Hardware Settings`. The most important task here is to assign roles (`Reference`, `Signal channel`, `External clock`) to the different input channels you want to use. To configure the Time Tagger's software clock, you can use the `Clock frequency`and`Clock divider` setttings.
+
+The storage behavior is controlled under `File -> Storage settings`.
+Choose a folder to store your data and a time of the day when a new file is started (default is midnight).
+You can also choose how many data points to show in the display.
+If you want to store the Time Taggers's sensor data for debugging, activate the checkbox.
+
+Finally, you can start the measurement by selecting `Measurement -> Start measurement`.
