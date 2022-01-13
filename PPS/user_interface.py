@@ -4,6 +4,7 @@ from threading import Thread
 from datetime import time
 from os.path import dirname, realpath, exists
 from time import sleep
+import ctypes
 from typing import Iterable, Optional, List, Callable, Type
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 from matplotlib.figure import Figure
@@ -56,6 +57,9 @@ class PPS_GUI:
     """The graphical user interface for tracking PPS signals."""
 
     def __init__(self):
+        app_id = 'com.swabianinstruments.pps.app'  # arbitrary string
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(app_id)
+
         self.root = tk.Tk()
         self.root.iconbitmap(this_folder() + "/iconTT.ico")
         panes = tk.PanedWindow(orient=tk.HORIZONTAL)
