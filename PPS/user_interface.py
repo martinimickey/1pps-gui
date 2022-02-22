@@ -303,12 +303,19 @@ class SettingsWindow(ModalWindow):
             resolution_label.grid(row=i+1, column=4, sticky=tk.E)
             phys_input.add_element(resolution_label)
 
-        frequency_row = 5+len(parent.settings.channels)
-        ttk.Label(self, text="Clock frequency").grid(row=frequency_row, column=0, sticky=tk.E, pady=10)
-        tk.Spinbox(self, textvariable=parent.settings.clock_frequency, from_=1E3, to=475E6, width=12).grid(row=frequency_row, column=1)
-        divider_row = frequency_row + 1
-        ttk.Label(self, text="Clock divider").grid(row=divider_row, column=0, sticky=tk.E, pady=10)
-        tk.Spinbox(self, textvariable=parent.settings.clock_divider, from_=1, to=10000, width=5).grid(row=divider_row, column=1)
+        row = 5+len(parent.settings.channels)
+        padding = 10
+        ttk.Label(self, text="Average events").grid(row=row, column=0, sticky=tk.E, pady=(padding, 0))
+        tk.Spinbox(self, textvariable=parent.settings.signal_average, from_=1, to=100000000, width=12).grid(row=row, column=1, pady=(padding, 0))
+        row += 1
+        ttk.Label(self, text="Signal divider").grid(row=row, column=0, sticky=tk.E)
+        tk.Spinbox(self, textvariable=parent.settings.signal_divider, from_=1, to=10000, width=12).grid(row=row, column=1)
+        row += 1
+        ttk.Label(self, text="Clock frequency").grid(row=row, column=0, sticky=tk.E, pady=(padding, 0))
+        tk.Spinbox(self, textvariable=parent.settings.clock_frequency, from_=1E3, to=475E6, width=12).grid(row=row, column=1, pady=(padding, 0))
+        row += 1
+        ttk.Label(self, text="Clock divider").grid(row=row, column=0, sticky=tk.E)
+        tk.Spinbox(self, textvariable=parent.settings.clock_divider, from_=1, to=10000, width=12).grid(row=row, column=1)
 
     def role(self, var, row, col) -> ttk.OptionMenu:
         menu = ttk.OptionMenu(self, var, var.get(), *[item.value for item in ChannelRoles])

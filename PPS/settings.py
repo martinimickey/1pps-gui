@@ -55,6 +55,8 @@ class Settings:
         self.max_live_tags = IntVar(root, 300)
         self.clock_divider = IntVar(root, 1)
         self.clock_frequency = DoubleVar(root, 1E7)
+        self.signal_divider = IntVar(root, 1)
+        self.signal_average = IntVar(root, 1)
 
     def save(self):
         with open("settings.dat", "wb") as storage:

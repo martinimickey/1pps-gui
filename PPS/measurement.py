@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone, time
 import numpy
 from .utilities import TimeTagGroup, MissingTimeTagGroup, TimeTagGroupBase, TimeTag
 import TimeTagger
+import numba
 
 NO_SIGNAL_THRESHOLD = timedelta(seconds=5)
 COLUMN_DELIMITER = ","
