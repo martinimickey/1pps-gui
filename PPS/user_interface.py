@@ -4,13 +4,14 @@ from threading import Thread
 from datetime import time
 from os.path import dirname, realpath, exists
 from time import sleep
+import traceback
 import ctypes
 from typing import Iterable, Optional, List, Callable, Type
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 from matplotlib.figure import Figure
 import TimeTagger
 from .measurement import PpsTracking
-from .utilities import AbstractTimeTaggerProxy, NetworkTimeTaggerProxy, USBTimeTaggerProxy
+from .utilities import AbstractTimeTaggerProxy, NetworkTimeTaggerProxy, USBTimeTaggerProxy, VirtualTimeTaggerProxy, TTV_ID
 from .settings import Input, Settings, ChannelRoles
 
 
@@ -23,7 +24,7 @@ class DisplayUpdater(Thread):
         super().__init__()
         self.measurement = measurement
         self.plot = plot
-        self.last_tag = -1
+        self.last_count = -1
         self.last_message = 0
         self.channels = channels
         self.channel_names = measurement.getChannelNames()
@@ -31,25 +32,28 @@ class DisplayUpdater(Thread):
 
     def run(self):
         while self.measurement.isRunning():
-            timetag_number, message_number = self.measurement.getMeasurementStatus()
-            if timetag_number > self.last_tag:
+            data = self.measurement.getDataObject()
+            if data.count != self.last_count:
                 try:
-                    data = self.measurement.getData()
-                    index = self.measurement.getIndex()
-                    for ch in range(data.shape[0]):
+                    data = self.measurement.getDataObject()
+                    index = data.getIndex()
+                    for ch, (y, err) in enumerate(zip(data.getData(), data.getError())):
+                        # offset = y[-1]
+                        # y -= offset
                         axis = self.plot.get_axes()[ch]
                         axis.clear()
                         axis.set_ylabel(f"{self.channel_names[ch]}\nOffset, ps")
-                        axis.scatter(index, data[ch, :])
+                        # axis.fill_between(index, y-err/2, y+err/2, color="C0", alpha=0.2)
+                        axis.scatter(index, y)
                     axis.set_xlabel("Time tag index")
                     self.plot.canvas.draw_idle()
                 except:
                     print("Display error")
-                self.last_tag = timetag_number
-            if message_number > self.last_message:
+                self.last_count = data.count
+            if self.measurement.message_index > self.last_message:
                 for msg in self.measurement.getMessages(self.last_message):
                     self.add_message(msg)
-                self.last_message = message_number
+                self.last_message = self.measurement.message_index
             sleep(0.1)
 
 
@@ -75,17 +79,18 @@ class PPS_GUI:
         self.fig = Figure()
         self.measurement: Optional[PpsTracking] = None
         self.__current_tagger: Optional[AbstractTimeTaggerProxy] = None
-        self.scan_time_taggers()
         self.settings = Settings(self.root)
+        self.settings.load()
+        self.scan_time_taggers()
         self.__last_connect_setting = None
         self.settings.connect.trace_add("write", lambda *args: self._connect_tagger(False))
         self.settings.resolution.trace_add("write", lambda *args: self._connect_tagger(True))
         self.settings.id_string.trace_add("write", lambda *args: self._connect_tagger(True))
-        self.settings.load()
         for var in self.settings.storage_time.values():
             var.trace("w", self._adjust_storage_time)
         self.settings.storage_folder.trace("w", self._adjust_storage_folder)
         self.settings.max_live_tags.trace("w", self._adjust_max_live_tags)
+        self._connect_tagger(True)
 
     @property
     def current_tagger(self):
@@ -97,6 +102,9 @@ class PPS_GUI:
             self.__taggers[self.__current_tagger.get_id()] = self.__current_tagger
         self.__scan_time_taggers(TimeTagger.scanTimeTagger, USBTimeTaggerProxy)
         self.__scan_time_taggers(TimeTagger.scanTimeTaggerServers, NetworkTimeTaggerProxy)
+        if TTV_ID not in self.__taggers:
+            self.__taggers[TTV_ID] = VirtualTimeTaggerProxy(self.settings.ttv_source,
+                                                            self.settings.ttv_speed)
 
     def __scan_time_taggers(self, method: Callable[[], Iterable[str]], proxy_type: Type[AbstractTimeTaggerProxy]):
         for connection_string in method():
@@ -123,6 +131,7 @@ class PPS_GUI:
         menu.add_cascade(label="File", menu=file_menu)
         file_menu.add_command(label="Hardware settings", command=lambda: SettingsWindow(self))
         file_menu.add_command(label="Storage settings", command=lambda: StorageConfigWindow(self))
+        file_menu.add_command(label="TT Virtual setup", command=lambda: TTVConfigWindow(self))
         file_menu.add_command(label="Close", command=self._quit)
         meas_menu = tk.Menu(menu, tearoff=0)
         menu.add_cascade(label="Measurement", menu=meas_menu)
@@ -165,7 +174,7 @@ class PPS_GUI:
                     self.__current_tagger = new_active
                     try:
                         self.__current_tagger.connect(resolution=self.settings.resolution.get())
-                    except RuntimeError:
+                    except RuntimeError as e:
                         if self.settings.resolution.get() != "Standard":
                             self.add_message(f"Cannot connect in HighRes mode, reset to Standard")
                             self.settings.resolution.set("Standard")
@@ -189,12 +198,12 @@ class PPS_GUI:
             return
         clock = None
         reference_name = ""
-        reference = 0
+        reference = None
         channels = list()
         channel_names = list()
         for ch, phys_input in self.settings.channels.items():
             if phys_input.enabled:
-                for attribute_name, factor in (("rising_role", 1), ("falling_role", -1)):
+                for attribute_name, name_suffix, factor in (("rising_role", ", rising", 1), ("falling_role", ", falling", -1)):
                     role = getattr(phys_input, attribute_name).get()
                     if role == ChannelRoles.REFERENCE.value:
                         reference = factor * ch
@@ -202,29 +211,47 @@ class PPS_GUI:
                     elif role == ChannelRoles.CLOCK.value:
                         clock = factor * ch
                     elif role == ChannelRoles.CHANNEL.value:
-                        channel_names.append(phys_input.name.get())
+                        name = phys_input.name.get()
+                        if name:
+                            name += name_suffix
+                        channel_names.append(name)
                         channels.append(factor * ch)
-        if not reference:
-            self.add_message("No reference given")
-            return
+        # if not reference:
+        #     self.add_message("No reference given")
+        #     return
 
         self.settings.connect.set(True)
         if self.__current_tagger is None:
             return
         tagger = self.__current_tagger.get_tagger()
-        if clock:
-            tagger.setEventDivider(clock, self.settings.clock_divider.get())
-            tagger.setSoftwareClock(input_channel=clock,
-                                    input_frequency=self.settings.clock_frequency.get()/self.settings.clock_divider.get())
-        else:
-            tagger.disableSoftwareClock()
+        try:
+            if clock:
+                tagger.setEventDivider(clock, self.settings.clock_divider.get())
+                tagger.setSoftwareClock(input_channel=clock,
+                                        input_frequency=self.settings.clock_frequency.get()/self.settings.clock_divider.get())
+            else:
+                tagger.disableSoftwareClock()
+        except:
+            pass
+        signal_divider = self.settings.signal_divider.get()
+        try:
+            if reference:
+                tagger.setEventDivider(reference, signal_divider)
+            for channel in channels:
+                tagger.setEventDivider(channel, signal_divider)
+        except:
+            if signal_divider != 1:
+                raise ValueError("Cannot use a signal_divider other than 1 in this case.")
         self.measurement = PpsTracking(tagger,
                                        channels=channels,
-                                       reference=reference,
+                                       reference_channel=reference,
+                                       n_average=self.settings.signal_average.get(),
                                        channel_names=channel_names,
+                                       period=int(1E12/self.settings.signal_frequency.get()),
                                        debug_to_file=self.settings.store_debug_info.get(),
                                        reference_name=reference_name,
                                        folder=self.settings.storage_folder.get())
+        self.__current_tagger.measurement_started()
         self.measurement.setTimetagsMaximum(self.settings.max_live_tags.get())
         self._adjust_storage_time()
         self.fig.clear()
@@ -237,6 +264,7 @@ class PPS_GUI:
     def _stop_measurement(self):
         try:
             self.measurement.stop()
+            del self.measurement
             self.measurement = None
         except AttributeError:
             pass
@@ -276,7 +304,6 @@ class SettingsWindow(ModalWindow):
         self.__parent = parent
         super().__init__(parent=parent, title="Settings")
         ttk.Label(self, text="Serial number").grid(row=0, column=0, pady=10, sticky=tk.E)
-        taggers = parent.get_tagger_ids()
         self.__tt_select = ttk.OptionMenu(self, parent.settings.id_string)
         self.scan_time_taggers()
         self.__tt_select.grid(row=0, column=1)
@@ -303,12 +330,22 @@ class SettingsWindow(ModalWindow):
             resolution_label.grid(row=i+1, column=4, sticky=tk.E)
             phys_input.add_element(resolution_label)
 
-        frequency_row = 5+len(parent.settings.channels)
-        ttk.Label(self, text="Clock frequency").grid(row=frequency_row, column=0, sticky=tk.E, pady=10)
-        tk.Spinbox(self, textvariable=parent.settings.clock_frequency, from_=1E3, to=475E6, width=12).grid(row=frequency_row, column=1)
-        divider_row = frequency_row + 1
-        ttk.Label(self, text="Clock divider").grid(row=divider_row, column=0, sticky=tk.E, pady=10)
-        tk.Spinbox(self, textvariable=parent.settings.clock_divider, from_=1, to=10000, width=5).grid(row=divider_row, column=1)
+        row = 5+len(parent.settings.channels)
+        padding = 10
+        ttk.Label(self, text="Signal frequency").grid(row=row, column=0, sticky=tk.E, pady=(padding, 0))
+        tk.Spinbox(self, textvariable=parent.settings.signal_frequency, from_=.1, to=5E8, width=12).grid(row=row, column=1, pady=(padding, 0))
+        row += 1
+        ttk.Label(self, text="Average events").grid(row=row, column=0, sticky=tk.E, pady=(padding, 0))
+        tk.Spinbox(self, textvariable=parent.settings.signal_average, from_=1, to=100000000, width=12).grid(row=row, column=1, pady=(padding, 0))
+        row += 1
+        ttk.Label(self, text="Signal divider").grid(row=row, column=0, sticky=tk.E)
+        tk.Spinbox(self, textvariable=parent.settings.signal_divider, from_=1, to=10000, width=12).grid(row=row, column=1)
+        row += 1
+        ttk.Label(self, text="Clock frequency").grid(row=row, column=0, sticky=tk.E, pady=(padding, 0))
+        tk.Spinbox(self, textvariable=parent.settings.clock_frequency, from_=1E3, to=475E6, width=12).grid(row=row, column=1, pady=(padding, 0))
+        row += 1
+        ttk.Label(self, text="Clock divider").grid(row=row, column=0, sticky=tk.E)
+        tk.Spinbox(self, textvariable=parent.settings.clock_divider, from_=1, to=10000, width=12).grid(row=row, column=1)
 
     def role(self, var, row, col) -> ttk.OptionMenu:
         menu = ttk.OptionMenu(self, var, var.get(), *[item.value for item in ChannelRoles])
@@ -319,7 +356,10 @@ class SettingsWindow(ModalWindow):
         self.__parent.scan_time_taggers()
         self.__tt_select["menu"].delete(0, "end")
         for id_string in self.__parent.get_tagger_ids():
-            self.__tt_select["menu"].add_command(label=id_string, command=lambda: self.__parent.settings.id_string.set(id_string))
+            self.__tt_select["menu"].add_command(label=id_string, command=self.__switch_id_string(id_string))
+
+    def __switch_id_string(self, id_string):
+        return lambda: self.__parent.settings.id_string.set(id_string)
 
 
 class StorageConfigWindow(ModalWindow):
@@ -366,6 +406,31 @@ class StorageConfigWindow(ModalWindow):
 
     def browse_folder(self):
         self.filename.set(tk.filedialog.askdirectory())
+
+    def run(self):
+        self.withdraw()
+
+
+class TTVConfigWindow(ModalWindow):
+    def __init__(self, parent: PPS_GUI):
+        super().__init__(parent=parent, title="Time Tagger Virtual setup")
+        tk.Grid.columnconfigure(self, 1, weight=1)
+        self.filename = parent.settings.ttv_source
+
+        browser = tk.Frame(self)
+        browser.grid(row=1, column=1, sticky=tk.E+tk.W)
+        tk.Label(self, text="File").grid(row=1, column=0, sticky=tk.E)
+        tk.Entry(browser, textvariable=self.filename, state="disabled").pack(side=tk.LEFT, fill=tk.X, expand=1)
+        tk.Button(browser, text="Browse", command=self.browse_file).pack(side=tk.RIGHT)
+
+        tk.Label(self, text="Speed").grid(row=2, column=0, sticky=tk.E)
+        tk.Spinbox(self, textvariable=parent.settings.ttv_speed, width=6,
+                   from_=-1,
+                   to=1000,
+                   format_="%02.2f").grid(row=2, column=1, sticky=tk.W)
+
+    def browse_file(self):
+        self.filename.set(tk.filedialog.askopenfilename())
 
     def run(self):
         self.withdraw()

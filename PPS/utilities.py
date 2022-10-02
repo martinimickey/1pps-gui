@@ -1,11 +1,14 @@
 """Utilities for 1PPS measurements."""
 
 from __future__ import annotations
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, TypeVar, Generic
 from datetime import datetime
 from abc import ABC, abstractmethod, abstractproperty
+from tkinter import StringVar, DoubleVar
 import numpy
 import TimeTagger
+
+TTV_ID = "<Time Tagger Virtual>"
 
 
 class TimeTagGroupBase:
@@ -55,9 +58,12 @@ class TimeTag:
         return f"({self.channel}: {self.time})"
 
 
-class AbstractTimeTaggerProxy(ABC):
+_TTType = TypeVar("_TTType", bound=TimeTagger.TimeTaggerBase)
+
+
+class AbstractTimeTaggerProxy(ABC, Generic[_TTType]):
     def __init__(self):
-        self._tagger: Optional[TimeTagger.TimeTaggerBase] = None
+        self._tagger: Optional[_TTType] = None
 
     def get_tagger(self):
         if not self._tagger:
@@ -74,7 +80,7 @@ class AbstractTimeTaggerProxy(ABC):
     def is_channel_allowed(self, channel: int) -> bool: ...
 
     @abstractmethod
-    def _connect(self, **kwargs) -> TimeTagger.TimeTaggerBase: ...
+    def _connect(self, **kwargs) -> _TTType: ...
 
     def connect(self, **kwargs):
         self._tagger = self._connect(**kwargs)
@@ -86,8 +92,10 @@ class AbstractTimeTaggerProxy(ABC):
 
     def allows_setters(self): return True
 
+    def measurement_started(self): pass
 
-class USBTimeTaggerProxy(AbstractTimeTaggerProxy):
+
+class USBTimeTaggerProxy(AbstractTimeTaggerProxy[TimeTagger.TimeTagger]):
     def __init__(self, serial):
         self.__serial = serial
         self.__allowed_channels = list()
@@ -112,7 +120,7 @@ class USBTimeTaggerProxy(AbstractTimeTaggerProxy):
         return tagger
 
 
-class NetworkTimeTaggerProxy(AbstractTimeTaggerProxy):
+class NetworkTimeTaggerProxy(AbstractTimeTaggerProxy[TimeTagger.TimeTaggerNetwork]):
     def __init__(self, address: str):
         self.__address = address
         self.__info = TimeTagger.getTimeTaggerServerInfo(address)
@@ -147,3 +155,31 @@ class NetworkTimeTaggerProxy(AbstractTimeTaggerProxy):
 
     def is_channel_allowed(self, channel: int):
         return channel in self.__allowed_channels
+
+
+class VirtualTimeTaggerProxy(AbstractTimeTaggerProxy[TimeTagger.TimeTaggerVirtual]):
+    def __init__(self, file: StringVar, speed: DoubleVar):
+        self.__file = file
+        self.__speed = speed
+        self.__channels = []
+
+    def get_id(self):
+        return TTV_ID
+
+    def get_resolution(self, channel: int) -> str:
+        return super().get_resolution(channel)
+
+    def is_channel_allowed(self, channel: int) -> bool:
+        return channel in self.__channels
+
+    def _connect(self, **kwargs) -> TimeTagger.TimeTaggerBase:
+        fr = TimeTagger.FileReader(self.__file.get())
+        fr.getData(1)
+        config = fr.getConfiguration()
+        self.__channels = list(config["registered channels"])
+        return TimeTagger.createTimeTaggerVirtual()
+
+    def measurement_started(self):
+        if isinstance(self._tagger, TimeTagger.TimeTaggerVirtual):
+            self._tagger.setReplaySpeed(self.__speed.get())
+            self._tagger.replay(self.__file.get())

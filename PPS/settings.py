@@ -50,11 +50,16 @@ class Settings:
         self.resolution = tk.StringVar(root, next(iter(TimeTagger.Resolution)).name)
         self.connect = tk.BooleanVar(root, False)
         self.storage_folder = StringVar(root, "")
+        self.ttv_source = StringVar(root, "")
+        self.ttv_speed = DoubleVar(root, 1.0)
         self.store_debug_info = BooleanVar(root, False)
         self.storage_time = {key: StringVar(root, "00", key) for key in ("hour", "minute", "second")}
         self.max_live_tags = IntVar(root, 300)
         self.clock_divider = IntVar(root, 1)
         self.clock_frequency = DoubleVar(root, 1E7)
+        self.signal_divider = IntVar(root, 1)
+        self.signal_average = IntVar(root, 1)
+        self.signal_frequency = DoubleVar(root, 1.0)
 
     def save(self):
         with open("settings.dat", "wb") as storage:

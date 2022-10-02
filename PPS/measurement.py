@@ -9,9 +9,31 @@ from datetime import datetime, timedelta, timezone, time
 import numpy
 from .utilities import TimeTagGroup, MissingTimeTagGroup, TimeTagGroupBase, TimeTag
 import TimeTagger
+from .fast_processing import fast_process, reference_dtype, channel_dtype
 
 NO_SIGNAL_THRESHOLD = timedelta(seconds=5)
 COLUMN_DELIMITER = ","
+
+
+class PpsData:
+    def __init__(self, cyclic_data, cyclic_data_reftime, reference):
+        start_index = reference["data_index"]
+        self.count = reference["count"]
+        self.__data = numpy.concatenate((cyclic_data[:, :, start_index:], cyclic_data[:, :, :start_index]), axis=2)
+        self.__data_reftime = numpy.concatenate((cyclic_data_reftime[start_index:], cyclic_data_reftime[:start_index]))
+        self.__offset = reference["count"]
+
+    def getData(self):
+        return self.__data[0, :, :]
+
+    def getIndex(self):
+        return numpy.arange(self.__offset-self.__data.shape[2], self.__offset)
+
+    def getTime(self):
+        return self.__data_reftime
+
+    def getError(self):
+        return self.__data[1, :, :]
 
 
 class PpsTracking(TimeTagger.CustomMeasurement):
@@ -20,36 +42,49 @@ class PpsTracking(TimeTagger.CustomMeasurement):
     def __init__(self,
                  tagger: TimeTagger.TimeTaggerBase,
                  channels: List[int],
-                 reference: int,
+                 n_average: int,
+                 reference_channel: Optional[int] = None,
                  period: int = 1000000000000,
                  folder: str = None,
                  channel_names: Optional[List[str]] = None,
                  reference_name: str = "Reference",
                  debug_to_file: bool = False):
+        if not channels:
+            raise ValueError("You need to provide channels")
         TimeTagger.CustomMeasurement.__init__(self, tagger)
         self.tagger = tagger
         self.data_file: Optional[TextIOWrapper] = None
         self._channel_tags: List[TimeTag] = list()
         self._reference_tag: Optional[TimeTagGroup] = None
-        self.__last_signal_time = self._now()
         self.__last_reference_time = None
         self._last_time_check = self._now()
-        self._messages = list()
-        self.__timetags: List[TimeTagGroupBase] = list()
+        self.__messages = list()
         self.__max_timetags = 300
         self._timetag_index = 0
-        self._message_index = 0
-        self.__all_channels = [reference]
+        self.__message_index = 0
+        self.__all_channels = [reference_channel] if reference_channel else []
         self.__all_channels += channels
         self._channel_tag_offest = dict()
 
-        self.channels = channels
-        self.period = period
+        # Data for fast processing
+        self.__reference = numpy.array([(reference_channel if reference_channel else 0, period, n_average, 0, 0, 0, 0, 0)], dtype=reference_dtype)
+        self.__channels = numpy.array([(channel, 0, 0, -1, 0, 0) for channel in channels], dtype=channel_dtype)
+        self.__stored_tags = numpy.empty([len(channels), 100], dtype=numpy.int64)
+        self.__histograms = numpy.zeros([len(channels), n_average+10])  # min(period//10, 100000) if reference_channel else (n_average+1000)])
+        self.__data = numpy.empty([2, len(channels), self.__max_timetags])
+        self.__data[:, :] = numpy.nan
+        self.__data_reftime = numpy.zeros(self.__max_timetags, dtype=numpy.int64)
+
+        self.__current_data: Optional[PpsData] = None
+        self.__storage_count = 0
+        self.__utc_timestamps: list[tuple[int, datetime]] = list()
+        # self.channels = channels
+        # self.period = period
         self.channel_names = []
         self.reference_name = reference_name if reference_name else "Reference"
-        for channel, name in zip(self.channels, channel_names if channel_names else [""] * len(channels)):
+        for channel, name in zip(channels, channel_names if channel_names else [""] * len(channels)):
             self.channel_names.append(name if name else f"Channel {channel}")
-        self.reference = reference
+        # self.reference = reference
         if folder is None or not isdir(folder):
             self.folder = getcwd()
         else:
@@ -64,94 +99,66 @@ class PpsTracking(TimeTagger.CustomMeasurement):
         self.debug_to_file = debug_to_file
         for channel in channels:
             self.register_channel(channel)
-        self.register_channel(reference)
-        self._open_file(self._last_time_check)
+        if reference_channel:
+            self.register_channel(reference_channel)
+        self._open_file(self._now())
         self.clear_impl()
         self.finalize_init()
 
     def __del__(self):
+        for channel in self.__all_channels:
+            self.unregister_channel(channel)
         self._close_file()
         self.stop()
 
-    def getData(self):
-        self._lock()
-        data = numpy.empty(
-            [len(self.channels), len(self.__timetags)], dtype=float)
-        for index, tag in enumerate(self.__timetags):
-            data[:, index] = tag.get_channel_tags(self.channels)
-        self._unlock()
-        return data
-
-    def getIndex(self):
-        return numpy.arange(self._timetag_index - len(self.__timetags), self._timetag_index)
-
-    def getMeasurementStatus(self):
-        return self._timetag_index, self._message_index
+    def getDataObject(self):
+        if not self.__current_data or self.__current_data.count != self.__reference[0]["count"]:
+            with self.mutex:
+                self.__current_data = PpsData(self.__data, self.__data_reftime, self.__reference[0])
+        return self.__current_data
 
     def getChannelNames(self):
         return self.channel_names
 
     def process(self, incoming_tags, begin_time, end_time):
         """Method called by TimeTagger.CustomMeasurement for processing of incoming time tags."""
-        current_time = self._now()
-        incoming_tags = incoming_tags[numpy.logical_or(numpy.isin(incoming_tags["channel"], self.__all_channels), incoming_tags["type"] > 0)]
-        for tag in incoming_tags:
-            if tag["channel"] == self.reference:
-                self._process_reference_tag()
-            if tag["type"] == 0:
-                if tag["channel"] == self.reference:
-                    self.__last_reference_time = current_time
-                    self._next_tag_group(tag["time"], current_time)
-                else:
-                    self._channel_tags.append(TimeTag(tag))
-            else:
-                if tag["type"] == 4:
-                    if tag["channel"] == self.reference:
-                        for i in range(tag["missed_events"]):
-                            self._missing_tag_group(current_time=current_time)
-            self.__last_signal_time = current_time
-        if current_time - self.__last_signal_time > NO_SIGNAL_THRESHOLD:
-            self._new_message(
-                "No incoming signals for more than " + str(NO_SIGNAL_THRESHOLD.seconds) + " s.", current_time)
-            self.__last_signal_time = current_time
-
-    def _select_tags_within_range(self):
-        """Add the timetags for the last reference tag. Called when a new reference tag arrives."""
-        reference_time = self._reference_tag.reference_tag
-        lower_limit = reference_time - self.period
-        self._determine_channel_tag_offset()
-        remaining = list()
-        minimum_distance = dict()
-        for tag in self._channel_tags:
-            if tag.channel not in self._channel_tag_offest:
-                remaining.append(tag)
-                continue
-            if tag.time < lower_limit:
-                continue
-            distance = tag.time - reference_time - self._channel_tag_offest[tag.channel]
-            if tag.channel not in minimum_distance or abs(distance) < minimum_distance[tag.channel]:
-                minimum_distance[tag.channel] = abs(distance)
-                self._reference_tag.add_tag(tag)
-            else:
-                remaining.append(tag)
-        self._channel_tags = remaining
-
-    def _determine_channel_tag_offset(self):
-        if len(self._channel_tag_offest) < len(self.channels):
-            reference_time = self._reference_tag.reference_tag
-            for channel in self.channels:
-                if channel not in self._channel_tag_offest:
-                    distance = [tag.time - reference_time for tag in self._channel_tags if tag.channel == channel]
-                    if len(distance) > 1:
-                        abs_distance = [abs(d) for d in distance]
-                        if min(abs_distance) < self.period:
-                            self._channel_tag_offest[channel] = distance[abs_distance.index(min(abs_distance))]
+        self.__utc_timestamps.append((end_time, self._now()))
+        messages = fast_process(incoming_tags,
+                                reference=self.__reference[0],
+                                channels=self.__channels,
+                                stored_tags=self.__stored_tags,
+                                histograms=self.__histograms,
+                                data=self.__data,
+                                data_reftime=self.__data_reftime)
+        for message in messages:
+            self._new_message(message)
+        self._store_timetags()
 
     def clear_impl(self):
         pass
 
     def setTimetagsMaximum(self, value: int):
-        self.__max_timetags = value if value > 0 else 0
+        with self.mutex:
+            self.__max_timetags = value if value > 0 else 0
+            current_size = self.__data_reftime.size
+            index = self.__reference[0]['data_index']
+            if value > current_size:
+                nan_data = numpy.empty([2, len(self.__channels), value-current_size], dtype=numpy.float64)
+                nan_data[:, :, :] = numpy.nan
+                self.__data_reftime = numpy.concatenate((self.__data_reftime[:index],
+                                                         numpy.zeros(value-current_size, dtype=numpy.int64),
+                                                         self.__data_reftime[index:]), axis=0)
+                self.__data = numpy.concatenate((self.__data[:, :, :index], nan_data, self.__data[:, :, index:]), axis=2)
+                self._new_message(f"increase by {value-current_size}")
+            elif value < current_size:
+                end = max(self.__reference[0]["data_index"], value)
+                start = end - value
+                self.__data_reftime = self.__data_reftime[start:end]
+                self.__data = self.__data[:, :, start:end]
+                self.__reference[0]["data_index"] -= start
+                if self.__reference[0]["data_index"] == value:
+                    self.__reference[0]["data_index"] = 0
+                self._new_message(f"decrease from {start} to {end}, index {self.__reference[0]['data_index']}")
 
     def setFolder(self, folder):
         self.folder = folder
@@ -160,7 +167,7 @@ class PpsTracking(TimeTagger.CustomMeasurement):
         self.new_file_time = value
 
     def getMessages(self, from_index: int):
-        return self._messages[from_index:]
+        return self.__messages[from_index:]
 
     def _now(self):
         return datetime.now(timezone.utc)
@@ -168,20 +175,13 @@ class PpsTracking(TimeTagger.CustomMeasurement):
     def _new_message(self, message: str, timestamp: Optional[datetime] = None):
         if timestamp is None:
             timestamp = self._now()
-        message = f"{timestamp.replace(microsecond=0).isoformat()}: {message}"
-        self._messages.append(message)
-        self._message_index += 1
+        message = f"{message} ({timestamp.replace(microsecond=0).isoformat()})"
+        self.__messages.append(message)
+        self.__message_index += 1
 
-    def _process_reference_tag(self):
-        if self._reference_tag is not None:
-            self._select_tags_within_range()
-            if missing := self._reference_tag.get_missing_channels(self.channels):
-                self._new_message("Tags missing: " +
-                                  ", ".join([f"input {ch}" for ch in missing]))
-            self.__timetags.append(self._reference_tag)
-            self._store_timetag(self._reference_tag)
-            if len(self.__timetags) > self.__max_timetags:
-                self.__timetags = self.__timetags[-self.__max_timetags:]
+    @property
+    def message_index(self):
+        return self.__message_index
 
     def _next_tag_group(self, timetag: int, current_time: datetime):
         """Create a new group of tags for a given reference tag."""
@@ -197,14 +197,14 @@ class PpsTracking(TimeTagger.CustomMeasurement):
     def get_sensor_data(self, col: int) -> list:
         return [row[col] for row in csv.reader(self.tagger.getSensorData().split("\n"), delimiter="\t") if row]
 
-    def _open_file(self, current_time: datetime):
+    def _open_file(self, timestamp):
         self._close_file()
-        filename = self.folder + "/" + current_time.strftime("%Y-%m-%d_%H-%M-%S.csv")
+        filename = self.folder + "/" + timestamp.strftime("%Y-%m-%d_%H-%M-%S.csv")
         self.data_file = open(filename, "w", newline="")
         writer = csv.writer(self.data_file, delimiter=COLUMN_DELIMITER)
         debug_header = self.get_sensor_data(0) if self.debug_to_file else []
         writer.writerow(["Index", "UTC", self.reference_name] +
-                        self.channel_names +
+                        [name + value_type for name in self.channel_names for value_type in [" Value", " Error"]] +
                         debug_header)
         self._new_message("New file opened: "+filename)
 
@@ -215,20 +215,35 @@ class PpsTracking(TimeTagger.CustomMeasurement):
             self.data_file = None
             self._new_message("File closed: " + filename)
 
-    def _store_timetag(self, tag: TimeTagGroup):
+    def _store_timetags(self):
         if self.data_file is None:
-            self._open_file(tag.time)
-        else:
-            if tag.time.day == self._last_time_check.day:
-                if self._last_time_check.time() < self.new_file_time <= tag.time.time():
-                    self._open_file(tag.time)
-            else:
-                if tag.time.time() >= self.new_file_time or self.new_file_time >= self.__last_reference_time.time():
-                    self._open_file(tag.time)
+            self._open_file(self._now())
         if self.data_file:
             writer = csv.writer(self.data_file, delimiter=COLUMN_DELIMITER)
-            writer.writerow([tag.index, tag.time.replace(microsecond=0).isoformat(), tag.reference_tag] +
-                            tag.get_channel_tags(self.channels) +
-                            tag.debug_data)
+            rows_to_write = self.__reference[0]["count"] - self.__storage_count
+            n_data = self.__data.shape[2]
+            while rows_to_write > n_data:
+                writer.writerow(["--- Missing Tag ---"])
+                rows_to_write -= 1
+            while rows_to_write:
+                index = (self.__reference[0]["data_index"] - rows_to_write) % n_data
+                reference = self.__data_reftime[index]
+                while self.__utc_timestamps[1][0] < reference:
+                    self.__utc_timestamps.pop(0)
+                ((t1, utc1), (t2, utc2)) = self.__utc_timestamps[:2]
+                timestamp = utc1 + (utc2-utc1)*(reference-t1)/(t2-t1)
+                if timestamp.day == self._last_time_check.day:
+                    if self._last_time_check.time() < self.new_file_time <= timestamp.time():
+                        self._open_file(timestamp)
+                        writer = csv.writer(self.data_file, delimiter=COLUMN_DELIMITER)
+                else:
+                    if timestamp.time() >= self.new_file_time or self.new_file_time >= self.__last_reference_time.time():
+                        self._open_file(timestamp)
+                        writer = csv.writer(self.data_file, delimiter=COLUMN_DELIMITER)
+                self._last_time_check = timestamp
+                writer.writerow([self.__storage_count, timestamp.replace(microsecond=0).isoformat(), reference] +
+                                [self.__data[i, channel, index] for channel in range(len(self.__channels)) for i in range(2)] +
+                                [])  # debug data
+                self.__storage_count += 1
+                rows_to_write -= 1
             self.data_file.flush()
-        self._last_time_check = tag.time
