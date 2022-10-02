@@ -212,12 +212,15 @@ class PPS_GUI:
         if self.__current_tagger is None:
             return
         tagger = self.__current_tagger.get_tagger()
-        if clock:
-            tagger.setEventDivider(clock, self.settings.clock_divider.get())
-            tagger.setSoftwareClock(input_channel=clock,
-                                    input_frequency=self.settings.clock_frequency.get()/self.settings.clock_divider.get())
-        else:
-            tagger.disableSoftwareClock()
+        try:
+            if clock:
+                tagger.setEventDivider(clock, self.settings.clock_divider.get())
+                tagger.setSoftwareClock(input_channel=clock,
+                                        input_frequency=self.settings.clock_frequency.get()/self.settings.clock_divider.get())
+            else:
+                tagger.disableSoftwareClock()
+        except RuntimeError:
+            pass
         self.measurement = PpsTracking(tagger,
                                        channels=channels,
                                        reference=reference,
