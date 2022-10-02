@@ -57,8 +57,11 @@ class PPS_GUI:
     """The graphical user interface for tracking PPS signals."""
 
     def __init__(self):
-        app_id = 'com.swabianinstruments.pps.app'  # arbitrary string
-        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(app_id)
+        try:
+            app_id = 'com.swabianinstruments.pps.app'  # arbitrary string
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(app_id)
+        except:
+            pass
 
         self.root = tk.Tk()
         self.root.iconbitmap(this_folder() + "/iconTT.ico")
