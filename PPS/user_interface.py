@@ -100,6 +100,10 @@ class PPS_GUI:
             self.__taggers[self.__current_tagger.get_id()] = self.__current_tagger
         self.__scan_time_taggers(TimeTagger.scanTimeTagger, USBTimeTaggerProxy)
         self.__scan_time_taggers(TimeTagger.scanTimeTaggerServers, NetworkTimeTaggerProxy)
+        try:
+            self.__taggers["local default server"] = NetworkTimeTaggerProxy("localhost:41101")
+        except:
+            pass
 
     def __scan_time_taggers(self, method: Callable[[], Iterable[str]], proxy_type: Type[AbstractTimeTaggerProxy]):
         for connection_string in method():
